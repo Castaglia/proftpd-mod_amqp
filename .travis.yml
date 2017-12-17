@@ -35,7 +35,6 @@ script:
   - cp install-sh proftpd/contrib/mod_amqp/
   - cp -R t/ proftpd/contrib/mod_amqp/t/
   - cd proftpd
-  - make clean
   - ./configure LIBS='-lm -lrt -pthread' --enable-devel=coverage --enable-dso --enable-tests --with-shared=mod_amqp
   - make
   - make clean

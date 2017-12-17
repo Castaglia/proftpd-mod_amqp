@@ -37,6 +37,7 @@
 # define AMQP_DELIVERY_PERSISTENT	2
 #endif
 
+#define AMQP_DEFAULT_APP_ID		"proftpd"
 #define AMQP_DEFAULT_VHOST		"/"
 #define AMQP_DEFAULT_USERNAME		"guest"
 #define AMQP_DEFAULT_PASSWORD		"guest"
@@ -58,6 +59,8 @@ static int amqp_engine = FALSE;
 /* XXX Wrap this in our own struct, for supporting other libs, too. */
 static amqp_connection_state_t amqp_conn;
 static amqp_channel_t amqp_chan;
+
+static const char *amqp_app_id = NULL;
 
 /* AMQPOptions */
 #define AMQP_OPT_PERSISTENT_DELIVERY	0x0001
@@ -302,7 +305,7 @@ static int amqp_send_msg(pool *p, const char *exchange, const char *routing_key,
   props.timestamp = time(NULL);
 
   props._flags |= AMQP_BASIC_APP_ID_FLAG;
-  props.app_id = amqp_cstring_bytes("proftpd");
+  props.app_id = amqp_cstring_bytes(amqp_app_id);
 
   /* From:
    *   https://www.rabbitmq.com/amqp-0-9-1-reference.html
@@ -672,6 +675,15 @@ static void log_events(cmd_rec *cmd) {
 /* Configuration handlers
  */
 
+/* usage: AMQPApplicationID name */
+MODRET set_amqpapplicationid(cmd_rec *cmd) {
+  CHECK_ARGS(cmd, 1);
+  CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
+
+  (void) add_config_param_str(cmd->argv[0], 1, cmd->argv[1]);
+  return PR_HANDLED(cmd);
+}
+
 /* usage: AMQPEngine on|off */
 MODRET set_amqpengine(cmd_rec *cmd) {
   int engine = 1;
@@ -1008,6 +1020,7 @@ static void amqp_sess_reinit_ev(const void *event_data, void *user_data) {
 
   amqp_engine = FALSE;
   amqp_opts = 0UL;
+  amqp_app_id = NULL;
 
   res = amqp_sess_init();
   if (res < 0) {
@@ -1135,6 +1148,14 @@ static int amqp_sess_init(void) {
     return 0;
   }
 
+  c = find_config(main_server->conf, CONF_PARAM, "AMQPApplicationID", FALSE);
+  if (c != NULL) {
+    amqp_app_id = c->argv[0];
+
+  } else {
+    amqp_app_id = AMQP_DEFAULT_APP_ID;
+  }
+
   c = find_config(main_server->conf, CONF_PARAM, "AMQPOptions", FALSE);
   while (c != NULL) {
     unsigned long opts = 0;
@@ -1155,6 +1176,7 @@ static int amqp_sess_init(void) {
  */
 
 static conftable amqp_conftab[] = {
+  { "AMQPApplicationID",	set_amqpapplicationid,	NULL },
   { "AMQPEngine",		set_amqpengine,		NULL },
   { "AMQPLog",			set_amqplog,		NULL },
   { "AMQPLogOnEvent",		set_amqplogonevent,	NULL },

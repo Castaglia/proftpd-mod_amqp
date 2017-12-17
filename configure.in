@@ -75,6 +75,23 @@ AC_CHECK_HEADER(amqp.h,
 AC_HEADER_STDC
 AC_CHECK_HEADERS(stdlib.h unistd.h limits.h fcntl.h)
 
+AC_MSG_CHECKING([for librabbitmq AMQP_DELIVERY_PERSISTENT enum])
+AC_TRY_COMPILE(
+  [
+    #include <sys/types.h>
+    #ifdef HAVE_RABBITMQ_AMQP_H
+    # include <amqp.h>
+    #endif
+  ], [
+    unsigned int delivery_mode = AMQP_DELIVERY_PERSISTENT;
+  ], [
+    AC_DEFINE(HAVE_RABBITMQ_DELIVERY_MODE, 1, [Define if you have AMQP_DELIVERY_PERSISTENT])
+    AC_MSG_RESULT(yes)
+  ], [
+    AC_MSG_RESULT(no)
+  ]
+)
+
 INCLUDES="$ac_build_addl_includes"
 LIBDIRS="$ac_build_addl_libdirs"
 

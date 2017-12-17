@@ -31,6 +31,12 @@
 #include <amqp.h>
 #include <amqp_tcp_socket.h>
 
+/* Newer versions of librabbitmq define these delivery mode values via enum. */
+#ifndef HAVE_RABBITMQ_DELIVERY_MODE
+# define AMQP_DELIVERY_NONPERSISTENT	1
+# define AMQP_DELIVERY_PERSISTENT	2
+#endif
+
 #define AMQP_DEFAULT_VHOST		"/"
 #define AMQP_DEFAULT_USERNAME		"guest"
 #define AMQP_DEFAULT_PASSWORD		"guest"

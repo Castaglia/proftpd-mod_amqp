@@ -38,6 +38,7 @@
 #endif
 
 #define AMQP_DEFAULT_APP_ID		"proftpd"
+#define AMQP_DEFAULT_MESSAGE_TYPE	"log"
 #define AMQP_DEFAULT_VHOST		"/"
 #define AMQP_DEFAULT_USERNAME		"guest"
 #define AMQP_DEFAULT_PASSWORD		"guest"
@@ -61,6 +62,7 @@ static amqp_connection_state_t amqp_conn;
 static amqp_channel_t amqp_chan;
 
 static const char *amqp_app_id = NULL;
+static const char *amqp_msg_type = NULL;
 
 /* AMQPOptions */
 #define AMQP_OPT_PERSISTENT_DELIVERY	0x0001
@@ -283,7 +285,7 @@ static int amqp_send_msg(pool *p, const char *exchange, const char *routing_key,
   props.content_type = amqp_cstring_bytes("application/json");
 
   props._flags |= AMQP_BASIC_TYPE_FLAG;
-  props.type = amqp_cstring_bytes("log");
+  props.type = amqp_cstring_bytes(amqp_msg_type);
 
   props._flags |= AMQP_BASIC_DELIVERY_MODE_FLAG;
   if (amqp_opts & AMQP_OPT_PERSISTENT_DELIVERY) {
@@ -844,6 +846,15 @@ MODRET set_amqplogonevent(cmd_rec *cmd) {
   return PR_HANDLED(cmd);
 }
 
+/* usage: AMQPMessageType name */
+MODRET set_amqpmessagetype(cmd_rec *cmd) {
+  CHECK_ARGS(cmd, 1);
+  CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
+
+  (void) add_config_param_str(cmd->argv[0], 1, cmd->argv[1]);
+  return PR_HANDLED(cmd);
+}
+
 /* usage: AMQPOptions ... */
 MODRET set_amqpoptions(cmd_rec *cmd) {
   config_rec *c = NULL;
@@ -1021,6 +1032,7 @@ static void amqp_sess_reinit_ev(const void *event_data, void *user_data) {
   amqp_engine = FALSE;
   amqp_opts = 0UL;
   amqp_app_id = NULL;
+  amqp_msg_type = NULL;
 
   res = amqp_sess_init();
   if (res < 0) {
@@ -1156,6 +1168,14 @@ static int amqp_sess_init(void) {
     amqp_app_id = AMQP_DEFAULT_APP_ID;
   }
 
+  c = find_config(main_server->conf, CONF_PARAM, "AMQPMessageType", FALSE);
+  if (c != NULL) {
+    amqp_msg_type = c->argv[0];
+
+  } else {
+    amqp_msg_type = AMQP_DEFAULT_MESSAGE_TYPE;
+  }
+
   c = find_config(main_server->conf, CONF_PARAM, "AMQPOptions", FALSE);
   while (c != NULL) {
     unsigned long opts = 0;
@@ -1180,6 +1200,7 @@ static conftable amqp_conftab[] = {
   { "AMQPEngine",		set_amqpengine,		NULL },
   { "AMQPLog",			set_amqplog,		NULL },
   { "AMQPLogOnEvent",		set_amqplogonevent,	NULL },
+  { "AMQPMessageType",		set_amqpmessagetype,	NULL },
   { "AMQPOptions",		set_amqpoptions,	NULL },
   { "AMQPServer",		set_amqpserver,		NULL },
 

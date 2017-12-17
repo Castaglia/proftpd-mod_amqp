@@ -54,6 +54,16 @@ my $TESTS = {
     test_class => [qw(forking)],
   },
 
+  amqp_config_msg_expires_before_expiry => {
+    order => ++$order,
+    test_class => [qw(forking)],
+  },
+
+  amqp_config_msg_expires_after_expiry => {
+    order => ++$order,
+    test_class => [qw(forking)],
+  },
+
 };
 
 sub new {
@@ -1124,6 +1134,263 @@ sub amqp_config_msg_type {
     $expected = '127.0.0.1';
     $self->assert($record->{remote_ip} eq $expected,
       "Expected remote IP '$expected', got '$record->{remote_ip}'");
+  };
+  if ($@) {
+    $ex = $@;
+  }
+
+  test_cleanup($setup->{log_file}, $ex);
+}
+
+sub amqp_config_msg_expires_before_expiry {
+  my $self = shift;
+  my $tmpdir = $self->{tmpdir};
+  my $setup = test_setup($tmpdir, 'amqp');
+
+  my $fmt_name = 'mod_amqp';
+  my $queue = $fmt_name;
+  rmq_queue_delete($queue);
+  rmq_queue_declare($queue);
+
+  # In ms
+  my $msg_expires = "30000";
+
+  my $config = {
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
+    TraceLog => $setup->{log_file},
+    Trace => 'amqp:20 jot:20',
+
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
+
+    IfModules => {
+      'mod_delay.c' => {
+        DelayEngine => 'off',
+      },
+
+      # Note: we need to use arrays here, since order of directives matters.
+      'mod_amqp.c' => [
+        'AMQPEngine on',
+        'AMQPServer 127.0.0.1:5672',
+        "AMQPLog $setup->{log_file}",
+        "LogFormat $fmt_name \"%A %a %b %c %D %d %E %{epoch} %F %f %{gid} %g %H %h %I %{iso8601} %J %L %l %m %O %P %p %{protocol} %R %r %{remote-port} %S %s %T %t %U %u %{uid} %V %v %{version}\"",
+        "AMQPLogOnEvent ALL $fmt_name",
+        "AMQPMessageExpires $msg_expires",
+      ],
+    },
+  };
+
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
+
+  # Open pipes, for use between the parent and child processes.  Specifically,
+  # the child will indicate when it's done with its test by writing a message
+  # to the parent.
+  my ($rfh, $wfh);
+  unless (pipe($rfh, $wfh)) {
+    die("Can't open pipe: $!");
+  }
+
+  my $ex;
+
+  # Fork child
+  $self->handle_sigchld();
+  defined(my $pid = fork()) or die("Can't fork: $!");
+  if ($pid) {
+    eval {
+      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
+      $client->login($setup->{user}, $setup->{passwd});
+
+      my $resp_code = $client->response_code();
+      my $resp_msg = $client->response_msg(0);
+
+      my $expected = 230;
+      $self->assert($expected == $resp_code,
+        "Expected response code $expected, got $resp_code");
+
+      $expected = "User $setup->{user} logged in";
+      $self->assert($expected eq $resp_msg,
+        "Expected response message '$expected', got '$resp_msg'");
+
+      $client->quit();
+    };
+    if ($@) {
+      $ex = $@;
+    }
+
+    $wfh->print("done\n");
+    $wfh->flush();
+
+  } else {
+    eval { server_wait($setup->{config_file}, $rfh) };
+    if ($@) {
+      warn($@);
+      exit 1;
+    }
+
+    exit 0;
+  }
+
+  # Stop server
+  server_stop($setup->{pid_file});
+  $self->assert_child_ok($pid);
+
+  eval {
+    my $data = rmq_queue_getall($queue);
+
+    my $nrecords = scalar(@$data);
+    $self->assert($nrecords == 4 || $nrecords == 5,
+      "Expected 4-5 records, got $nrecords");
+
+    # Assert the message was published with the expected/configured properties
+    my $content_type = $data->[0]->{props}->{content_type};
+    $self->assert($content_type eq 'application/json',
+      "Expected content type property 'application/json', got '$content_type'");
+
+    my $type = $data->[0]->{props}->{type};
+    $self->assert($type eq 'log',
+      "Expected type property 'log', got '$type'");
+
+    my $msg_app_id = $data->[0]->{props}->{app_id};
+    $self->assert($msg_app_id eq 'proftpd',
+      "Expected app ID property 'proftpd', got '$msg_app_id'");
+
+    my $ts = $data->[0]->{props}->{timestamp};
+    $self->assert($ts > 0, "Expected timestamp property, got $ts");
+
+    my $delivery_mode = $data->[0]->{props}->{delivery_mode};
+    $self->assert($delivery_mode == 1,
+      "Expected delivery mode property 1, got $delivery_mode");
+
+    my $msg_expiry = $data->[0]->{props}->{expiration};
+    $self->assert($msg_expiry eq $msg_expires,
+      "Expected expiration property '$msg_expires', got '$msg_expiry'");
+
+    require JSON;
+    my $json = $data->[3]->{body};
+    my $record = decode_json($json);
+
+    my $expected = $setup->{user};
+    $self->assert($record->{user} eq $expected,
+      "Expected user '$expected', got '$record->{user}'");
+
+    $expected = '127.0.0.1';
+    $self->assert($record->{remote_ip} eq $expected,
+      "Expected remote IP '$expected', got '$record->{remote_ip}'");
+  };
+  if ($@) {
+    $ex = $@;
+  }
+
+  test_cleanup($setup->{log_file}, $ex);
+}
+
+sub amqp_config_msg_expires_after_expiry {
+  my $self = shift;
+  my $tmpdir = $self->{tmpdir};
+  my $setup = test_setup($tmpdir, 'amqp');
+
+  my $fmt_name = 'mod_amqp';
+  my $queue = $fmt_name;
+  rmq_queue_delete($queue);
+  rmq_queue_declare($queue);
+
+  # In ms
+  my $msg_expires = "1";
+
+  my $config = {
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
+    TraceLog => $setup->{log_file},
+    Trace => 'amqp:20 jot:20',
+
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
+
+    IfModules => {
+      'mod_delay.c' => {
+        DelayEngine => 'off',
+      },
+
+      # Note: we need to use arrays here, since order of directives matters.
+      'mod_amqp.c' => [
+        'AMQPEngine on',
+        'AMQPServer 127.0.0.1:5672',
+        "AMQPLog $setup->{log_file}",
+        "LogFormat $fmt_name \"%A %a %b %c %D %d %E %{epoch} %F %f %{gid} %g %H %h %I %{iso8601} %J %L %l %m %O %P %p %{protocol} %R %r %{remote-port} %S %s %T %t %U %u %{uid} %V %v %{version}\"",
+        "AMQPLogOnEvent ALL $fmt_name",
+        "AMQPMessageExpires $msg_expires",
+      ],
+    },
+  };
+
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
+
+  # Open pipes, for use between the parent and child processes.  Specifically,
+  # the child will indicate when it's done with its test by writing a message
+  # to the parent.
+  my ($rfh, $wfh);
+  unless (pipe($rfh, $wfh)) {
+    die("Can't open pipe: $!");
+  }
+
+  my $ex;
+
+  # Fork child
+  $self->handle_sigchld();
+  defined(my $pid = fork()) or die("Can't fork: $!");
+  if ($pid) {
+    eval {
+      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
+      $client->login($setup->{user}, $setup->{passwd});
+
+      my $resp_code = $client->response_code();
+      my $resp_msg = $client->response_msg(0);
+
+      my $expected = 230;
+      $self->assert($expected == $resp_code,
+        "Expected response code $expected, got $resp_code");
+
+      $expected = "User $setup->{user} logged in";
+      $self->assert($expected eq $resp_msg,
+        "Expected response message '$expected', got '$resp_msg'");
+
+      $client->quit();
+    };
+    if ($@) {
+      $ex = $@;
+    }
+
+    $wfh->print("done\n");
+    $wfh->flush();
+
+  } else {
+    eval { server_wait($setup->{config_file}, $rfh) };
+    if ($@) {
+      warn($@);
+      exit 1;
+    }
+
+    exit 0;
+  }
+
+  # Stop server
+  server_stop($setup->{pid_file});
+  $self->assert_child_ok($pid);
+
+  eval {
+    # Ensure that our messages have expired
+    sleep(2);
+
+    my $data = rmq_queue_getall($queue);
+
+    my $nrecords = scalar(@$data);
+    $self->assert($nrecords == 0,
+      "Expected 0 records, got $nrecords");
   };
   if ($@) {
     $ex = $@;

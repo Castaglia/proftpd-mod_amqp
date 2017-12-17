@@ -47,12 +47,10 @@
 /* Define if you have the <uuid/uuid.h> header.  */
 #undef HAVE_UUID_UUID_H
 
-/* Define if using the rabbitmq-c library. */
-#undef AMQP_USE_RABBITMQ_C
-
 /* Miscellaneous */
 extern int amqp_logfd;
 extern module amqp_module;
 extern pool *amqp_pool;
+extern unsigned long amqp_opts;
 
 #endif /* MOD_AMQP_H */

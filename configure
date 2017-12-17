@@ -1258,12 +1258,6 @@ if test -n "$ac_init_help"; then
 
   cat <<\_ACEOF
 
-Optional Features:
-  --disable-FEATURE       do not include FEATURE (same as --enable-FEATURE=no)
-  --enable-FEATURE[=ARG]  include FEATURE [ARG=yes]
-  --enable-rabbitmqc      enable RabbitMQ-C support (default=auto)
-
-
 Optional Packages:
   --with-PACKAGE[=ARG]    use PACKAGE [ARG=yes]
   --without-PACKAGE       do not use PACKAGE (same as --with-PACKAGE=no)
@@ -3891,18 +3885,7 @@ if test "${with_libraries+set}" = set; then
 fi
 
 
-pr_use_rabbmitmqc=""
-# Check whether --enable-rabbitmqc was given.
-if test "${enable_rabbitmqc+set}" = set; then
-  enableval=$enable_rabbitmqc;  if test x"$enableval" = xno ; then
-      pr_use_rabbitmqc="no"
-    fi
-
-fi
-
-
-if test x"$pr_use_rabbitmqc" = xyes; then
-  if test "${ac_cv_header_amqp_h+set}" = set; then
+if test "${ac_cv_header_amqp_h+set}" = set; then
   { echo "$as_me:$LINENO: checking for amqp.h" >&5
 echo $ECHO_N "checking for amqp.h... $ECHO_C" >&6; }
 if test "${ac_cv_header_amqp_h+set}" = set; then
@@ -4029,21 +4012,16 @@ echo "${ECHO_T}$ac_cv_header_amqp_h" >&6; }
 fi
 if test $ac_cv_header_amqp_h = yes; then
 
+
 cat >>confdefs.h <<\_ACEOF
 #define HAVE_RABBITMQ_AMQP_H 1
 _ACEOF
 
 
-cat >>confdefs.h <<\_ACEOF
-#define AMQP_USE_RABBITMQ_C 1
-_ACEOF
-
-     MODULE_LIBS="$MODULE_LIBS -lrabbitmq"
 
 fi
 
 
-fi
 
 { echo "$as_me:$LINENO: checking for ANSI C header files" >&5
 echo $ECHO_N "checking for ANSI C header files... $ECHO_C" >&6; }

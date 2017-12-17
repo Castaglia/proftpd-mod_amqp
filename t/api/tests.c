@@ -30,7 +30,6 @@ struct testsuite_info {
 };
 
 static struct testsuite_info suites[] = {
-  { "rabbitmq",		tests_get_rabbitmq_suite },
 
   { NULL, NULL }
 };

@@ -34,6 +34,8 @@
 #define AMQP_DEFAULT_VHOST		"/"
 #define AMQP_DEFAULT_USERNAME		"guest"
 #define AMQP_DEFAULT_PASSWORD		"guest"
+#define AMQP_DEFAULT_EXCHANGE		""
+#define AMQP_DEFAULT_ROUTING_KEY	""
 
 extern xaset_t *server_list;
 
@@ -44,20 +46,18 @@ module amqp_module;
 
 int amqp_logfd = -1;
 pool *amqp_pool = NULL;
+unsigned long amqp_opts = 0UL;
 
 static int amqp_engine = FALSE;
-static unsigned long amqp_opts = 0UL;
 
 /* XXX Wrap this in our own struct, for supporting other libs, too. */
 static amqp_connection_state_t amqp_conn;
 static amqp_channel_t amqp_chan;
 
 /* AMQPOptions */
-#define AMQP_OPT_WITH_MESSAGE_ID	0x0001
-#define AMQP_OPT_WITH_TIMESTAMP		0x0002
-#define AMQP_OPT_WITH_USER_ID		0x0004
-#define AMQP_OPT_WITH_APP_ID		0x0008
+#define AMQP_OPT_PERSISTENT_DELIVERY	0x0001
 
+static pr_table_t *jot_logfmt2json = NULL;
 static const char *trace_channel = "amqp";
 
 /* Necessary function prototypes. */
@@ -124,6 +124,7 @@ static int amqp_open_conn(pool *p, config_rec *c) {
   int connected = FALSE;
   array_header *addrs;
   amqp_socket_t *sock;
+  amqp_channel_t chan;
   amqp_rpc_reply_t reply;
   const char *ip_addr, *vhost, *username = NULL, *password = NULL;
   unsigned int port;
@@ -136,11 +137,14 @@ static int amqp_open_conn(pool *p, config_rec *c) {
     return -1;
   }
 
+  /* XXX TODO This is where we would use e.g. amqp_ssl_socket_new() to
+   * create the sock, set the TLS options on it, etc.
+   */
   sock = amqp_tcp_socket_new(amqp_conn);
   if (sock == NULL) {
     (void) pr_log_writefile(amqp_logfd, MOD_AMQP_VERSION,
       "error allocating memory for AMQP socket");
-    amqp_destroy_connection(amqp_conn);
+    (void) amqp_destroy_connection(amqp_conn);
     amqp_conn = NULL;
 
     errno = ENOMEM;
@@ -171,7 +175,7 @@ static int amqp_open_conn(pool *p, config_rec *c) {
   }
 
   if (connected == FALSE) {
-    amqp_destroy_connection(amqp_conn);
+    (void) amqp_destroy_connection(amqp_conn);
     amqp_conn = NULL;
 
     errno = ENOENT;
@@ -202,7 +206,8 @@ static int amqp_open_conn(pool *p, config_rec *c) {
   if (reply.reply_type != AMQP_RESPONSE_NORMAL) {
     amqp_trace_reply(p, reply, "broker login error");
 
-    amqp_destroy_connection(amqp_conn);
+    (void) amqp_connection_close(amqp_conn, AMQP_NOT_ALLOWED);
+    (void) amqp_destroy_connection(amqp_conn);
     amqp_conn = NULL;
 
     errno = EPERM;
@@ -212,6 +217,22 @@ static int amqp_open_conn(pool *p, config_rec *c) {
   pr_trace_msg(trace_channel, 12,
     "authenticated to broker %s:%u with vhost '%s', username '%s'", ip_addr,
     port, vhost, username);
+
+  chan = 1;
+  amqp_channel_open(amqp_conn, chan);
+  reply = amqp_get_rpc_reply(amqp_conn);
+  if (reply.reply_type != AMQP_RESPONSE_NORMAL) {
+    amqp_trace_reply(p, reply, "channel opening error");
+
+    (void) amqp_connection_close(amqp_conn, AMQP_CHANNEL_ERROR);
+    (void) amqp_destroy_connection(amqp_conn);
+    amqp_conn = NULL;
+
+    errno = EPERM;
+    return -1;
+  }
+
+  amqp_chan = chan;
   return 0;
 }
 
@@ -239,6 +260,370 @@ static int amqp_close_conn(pool *p) {
   amqp_chan = 0;
 
   return 0;
+}
+
+static int amqp_send_msg(pool *p, const char *exchange, const char *routing_key,
+    char *payload, size_t payload_len) {
+  amqp_basic_properties_t props;
+  int mandatory, immediate, res;
+
+  props._flags = AMQP_BASIC_CONTENT_TYPE_FLAG;
+  props.content_type = amqp_cstring_bytes("application/json");
+
+  props._flags |= AMQP_BASIC_TYPE_FLAG;
+  props.type = amqp_cstring_bytes("log");
+
+  props._flags |= AMQP_BASIC_DELIVERY_MODE_FLAG;
+  if (amqp_opts & AMQP_OPT_PERSISTENT_DELIVERY) {
+    props.delivery_mode = AMQP_DELIVERY_PERSISTENT;
+
+  } else {
+    props.delivery_mode = AMQP_DELIVERY_NONPERSISTENT;
+  }
+
+  /* TODO: Support AMQP_BASIC_EXPIRATION_FLAG, for msg expiration; default
+   * to 5 min?
+   *
+   * Note: While it might be tempting to use AMQP_BASIC_USER_ID_FLAG,
+   * it will not work as desired.  RabbitMQ will verify this user ID againt
+   * that used for the connection, which is not what we want.
+   */
+
+  props._flags |= AMQP_BASIC_TIMESTAMP_FLAG;
+  props.timestamp = time(NULL);
+
+  props._flags |= AMQP_BASIC_APP_ID_FLAG;
+  props.app_id = amqp_cstring_bytes("proftpd");
+
+  /* From:
+   *   https://www.rabbitmq.com/amqp-0-9-1-reference.html
+   *
+   * mandatory
+   *
+   *   This flag tells the server how to react if the message cannot be routed     *   to a queue. If this flag is set, the server will return an unroutable
+   *   message with a Return method. If this flag is zero, the server silently
+   *   drops the message.
+   *
+   * immediate
+   *
+   *  This flag tells the server how to react if the message cannot be routed
+   *  to a queue consumer immediately. If this flag is set, the server will
+   *  return an undeliverable message with a Return method. If this flag is
+   *  zero, the server will queue the message, but with no guarantee that it
+   *  will ever be consumed.
+   */
+
+  mandatory = TRUE;
+  immediate = FALSE;
+
+  res = amqp_basic_publish(amqp_conn, amqp_chan,
+    amqp_cstring_bytes(exchange),
+    amqp_cstring_bytes(routing_key),
+    mandatory,
+    immediate,
+    &props,
+    amqp_cstring_bytes(payload));
+  if (res != AMQP_STATUS_OK) {
+    pr_trace_msg(trace_channel, 3, "message publish error: %s",
+      amqp_error_string2(res));
+    errno = EIO;
+    return -1;
+  }
+
+  return 0;
+}
+
+/* Logging */
+
+struct amqp_buffer {
+  char *ptr, *buf;
+  size_t bufsz, buflen;
+};
+
+static void amqp_buffer_append_text(struct amqp_buffer *log, const char *text,
+    size_t text_len) {
+  if (text == NULL ||
+      text_len == 0) {
+    return;
+  }
+
+  if (text_len > log->buflen) {
+    text_len = log->buflen;
+  }
+
+  pr_trace_msg(trace_channel, 19, "appending text '%.*s' (%lu) to buffer",
+    (int) text_len, text, (unsigned long) text_len);
+  memcpy(log->buf, text, text_len);
+  log->buf += text_len;
+  log->buflen -= text_len;
+}
+
+static int resolve_on_meta(pool *p, pr_jot_ctx_t *jot_ctx,
+    unsigned char logfmt_id, const char *jot_hint, const void *val) {
+  struct amqp_buffer *log;
+
+  log = jot_ctx->log;
+  if (log->buflen > 0) {
+    const char *text = NULL;
+    size_t text_len = 0;
+    char buf[1024];
+
+    switch (logfmt_id) {
+      case LOGFMT_META_MICROSECS: {
+        unsigned long num;
+
+        num = *((double *) val);
+        text_len = pr_snprintf(buf, sizeof(buf)-1, "%06lu", num);
+        buf[text_len] = '\0';
+        text = buf;
+        break;
+      }
+
+      case LOGFMT_META_MILLISECS: {
+        unsigned long num;
+
+        num = *((double *) val);
+        text_len = pr_snprintf(buf, sizeof(buf)-1, "%03lu", num);
+        buf[text_len] = '\0';
+        text = buf;
+        break;
+      }
+
+      case LOGFMT_META_LOCAL_PORT:
+      case LOGFMT_META_REMOTE_PORT:
+      case LOGFMT_META_RESPONSE_CODE: {
+        int num;
+
+        num = *((double *) val);
+        text_len = pr_snprintf(buf, sizeof(buf)-1, "%d", num);
+        buf[text_len] = '\0';
+        text = buf;
+        break;
+      }
+
+      case LOGFMT_META_UID: {
+        uid_t uid;
+
+        uid = *((double *) val);
+        text = pr_uid2str(p, uid);
+        break;
+      }
+
+      case LOGFMT_META_GID: {
+        gid_t gid;
+
+        gid = *((double *) val);
+        text = pr_gid2str(p, gid);
+        break;
+      }
+
+      case LOGFMT_META_BYTES_SENT:
+      case LOGFMT_META_FILE_OFFSET:
+      case LOGFMT_META_FILE_SIZE:
+      case LOGFMT_META_RAW_BYTES_IN:
+      case LOGFMT_META_RAW_BYTES_OUT:
+      case LOGFMT_META_RESPONSE_MS:
+      case LOGFMT_META_XFER_MS: {
+        off_t num;
+
+        num = *((double *) val);
+        text_len = pr_snprintf(buf, sizeof(buf)-1, "%" PR_LU, (pr_off_t) num);
+        buf[text_len] = '\0';
+        text = buf;
+        break;
+      }
+
+      case LOGFMT_META_EPOCH:
+      case LOGFMT_META_PID: {
+        unsigned long num;
+
+        num = *((double *) val);
+        text_len = pr_snprintf(buf, sizeof(buf)-1, "%lu", num);
+        buf[text_len] = '\0';
+        text = buf;
+        break;
+      }
+
+      case LOGFMT_META_FILE_MODIFIED: {
+        int truth;
+
+        truth = *((int *) val);
+        text = truth ? "true" : "false";
+        break;
+      }
+
+      case LOGFMT_META_SECONDS: {
+        float num;
+
+        num = *((double *) val);
+        text_len = pr_snprintf(buf, sizeof(buf)-1, "%0.3f", num);
+        buf[text_len] = '\0';
+        text = buf;
+        break;
+      }
+
+      case LOGFMT_META_ANON_PASS:
+      case LOGFMT_META_BASENAME:
+      case LOGFMT_META_CLASS:
+      case LOGFMT_META_CMD_PARAMS:
+      case LOGFMT_META_COMMAND:
+      case LOGFMT_META_DIR_NAME:
+      case LOGFMT_META_DIR_PATH:
+      case LOGFMT_META_ENV_VAR:
+      case LOGFMT_META_EOS_REASON:
+      case LOGFMT_META_FILENAME:
+      case LOGFMT_META_GROUP:
+      case LOGFMT_META_IDENT_USER:
+      case LOGFMT_META_ISO8601:
+      case LOGFMT_META_LOCAL_FQDN:
+      case LOGFMT_META_LOCAL_IP:
+      case LOGFMT_META_LOCAL_NAME:
+      case LOGFMT_META_METHOD:
+      case LOGFMT_META_NOTE_VAR:
+      case LOGFMT_META_ORIGINAL_USER:
+      case LOGFMT_META_PROTOCOL:
+      case LOGFMT_META_REMOTE_HOST:
+      case LOGFMT_META_REMOTE_IP:
+      case LOGFMT_META_RENAME_FROM:
+      case LOGFMT_META_RESPONSE_STR:
+      case LOGFMT_META_TIME:
+      case LOGFMT_META_USER:
+      case LOGFMT_META_VERSION:
+      case LOGFMT_META_VHOST_IP:
+      case LOGFMT_META_XFER_FAILURE:
+      case LOGFMT_META_XFER_PATH:
+      case LOGFMT_META_XFER_STATUS:
+      case LOGFMT_META_XFER_TYPE:
+      default:
+        text = val;
+    }
+
+    if (text != NULL &&
+        text_len == 0) {
+      text_len = strlen(text);
+    }
+
+    amqp_buffer_append_text(log, text, text_len);
+  }
+
+  return 0;
+}
+
+static int resolve_on_other(pool *p, pr_jot_ctx_t *jot_ctx, unsigned char *text,
+    size_t text_len) {
+  struct amqp_buffer *log;
+
+  log = jot_ctx->log;
+  amqp_buffer_append_text(log, (const char *) text, text_len);
+  return 0;
+}
+
+static void log_event(amqp_channel_t chan, config_rec *c, cmd_rec *cmd) {
+  pool *tmp_pool;
+  int res;
+  pr_jot_ctx_t *jot_ctx;
+  pr_jot_filters_t *jot_filters;
+  pr_json_object_t *json;
+  const char *fmt_name = NULL;
+  char *payload = NULL;
+  size_t payload_len = 0;
+  unsigned char *log_fmt, *exchange_fmt;
+
+  jot_filters = c->argv[0];
+  fmt_name = c->argv[1];
+  log_fmt = c->argv[2];
+  exchange_fmt = c->argv[3];
+
+  if (jot_filters == NULL ||
+      fmt_name == NULL ||
+      log_fmt == NULL) {
+    return;
+  }
+
+  tmp_pool = make_sub_pool(cmd->tmp_pool);
+  jot_ctx = pcalloc(tmp_pool, sizeof(pr_jot_ctx_t));
+  json = pr_json_object_alloc(tmp_pool);
+  jot_ctx->log = json;
+  jot_ctx->user_data = jot_logfmt2json;
+
+  res = pr_jot_resolve_logfmt(tmp_pool, cmd, jot_filters, log_fmt, jot_ctx,
+    pr_jot_on_json, NULL, NULL);
+  if (res == 0) {
+    payload = pr_json_object_to_text(tmp_pool, json, "");
+    payload_len = strlen(payload);
+    pr_trace_msg(trace_channel, 8, "generated JSON payload for %s: %.*s",
+      (char *) cmd->argv[0], (int) payload_len, payload);
+
+  } else {
+    /* EPERM indicates that the message was filtered. */
+    if (errno != EPERM) {
+      (void) pr_log_writefile(amqp_logfd, MOD_AMQP_VERSION,
+        "error generating JSON formatted log message: %s", strerror(errno));
+    }
+
+    payload = NULL;
+    payload_len = 0;
+  }
+
+  pr_json_object_free(json);
+
+  if (payload_len > 0) {
+    const char *exchange, *routing_key;
+
+    if (exchange_fmt != NULL) {
+      struct amqp_buffer *rb;
+      char exchange_buf[1024];
+
+      rb = pcalloc(tmp_pool, sizeof(struct amqp_buffer));
+      rb->bufsz = rb->buflen = sizeof(exchange_buf)-1;
+      rb->ptr = rb->buf = exchange_buf;
+
+      jot_ctx->log = rb;
+
+      res = pr_jot_resolve_logfmt(tmp_pool, cmd, NULL, exchange_fmt, jot_ctx,
+        resolve_on_meta, NULL, resolve_on_other);
+      if (res == 0) {
+        size_t exchange_buflen;
+
+        exchange_buflen = rb->bufsz - rb->buflen;
+        exchange = pstrndup(tmp_pool, exchange_buf, exchange_buflen);
+
+      } else {
+        (void) pr_log_writefile(amqp_logfd, MOD_AMQP_VERSION,
+          "error resolving AMQP exchange format: %s", strerror(errno));
+        exchange = AMQP_DEFAULT_EXCHANGE;
+      }
+
+    } else {
+      exchange = AMQP_DEFAULT_EXCHANGE;
+    }
+
+    routing_key = AMQP_DEFAULT_ROUTING_KEY;
+    res = amqp_send_msg(cmd->tmp_pool, exchange, routing_key, payload,
+      payload_len);
+    if (res < 0) {
+      (void) pr_log_writefile(amqp_logfd, MOD_AMQP_VERSION,
+        "error publishing log message to '%s': %s", exchange, strerror(errno));
+
+    } else {
+      pr_trace_msg(trace_channel, 17, "published log message to '%s'",
+        exchange);
+    }
+  }
+
+  destroy_pool(tmp_pool);
+}
+
+static void log_events(cmd_rec *cmd) {
+  config_rec *c;
+
+  c = find_config(CURRENT_CONF, CONF_PARAM, "AMQPLogOnEvent", FALSE);
+  while (c != NULL) {
+    pr_signals_handle();
+
+    log_event(amqp_chan, c, cmd);
+    c = find_config_next(c, c->next, CONF_PARAM, "AMQPLogOnEvent", FALSE);
+  }
 }
 
 /* Configuration handlers
@@ -344,17 +729,8 @@ MODRET set_amqpoptions(cmd_rec *cmd) {
   c = add_config_param(cmd->argv[0], 1, NULL);
 
   for (i = 1; i < cmd->argc; i++) {
-    if (strcmp(cmd->argv[i], "WithMessageID") == 0) {
-      opts |= AMQP_OPT_WITH_MESSAGE_ID;
-
-    } else if (strcmp(cmd->argv[i], "WithTimestamp") == 0) {
-      opts |= AMQP_OPT_WITH_TIMESTAMP;
-
-    } else if (strcmp(cmd->argv[i], "WithUserID") == 0) {
-      opts |= AMQP_OPT_WITH_USER_ID;
-
-    } else if (strcmp(cmd->argv[i], "WithAppID") == 0) {
-      opts |= AMQP_OPT_WITH_APP_ID;
+    if (strcmp(cmd->argv[i], "PersistentDelivery") == 0) {
+      opts |= AMQP_OPT_PERSISTENT_DELIVERY;
 
     } else {
       CONF_ERROR(cmd, pstrcat(cmd->tmp_pool, ": unknown AMQPOption '",
@@ -476,6 +852,7 @@ MODRET amqp_log_any(cmd_rec *cmd) {
     return PR_DECLINED(cmd);
   }
 
+  log_events(cmd);
   return PR_DECLINED(cmd);
 }
 
@@ -595,26 +972,21 @@ static int amqp_sess_init(void) {
     }
   }
 
-  amqp_pool = make_sub_pool(session.pool);
-  pr_pool_tag(amqp_pool, MOD_AMQP_VERSION);
-
-  c = find_config(main_server->conf, CONF_PARAM, "AMQPOptions", FALSE);
-  while (c != NULL) {
-    unsigned long opts = 0;
-
-    pr_signals_handle();
-
-    opts = *((unsigned long *) c->argv[0]);
-    amqp_opts |= opts;
-
-    c = find_config_next(c, c->next, CONF_PARAM, "AMQPOptions", FALSE);
-  }
-
   c = find_config(main_server->conf, CONF_PARAM, "AMQPServer", FALSE);
   if (c == NULL) {
     (void) pr_log_writefile(amqp_logfd, MOD_AMQP_VERSION,
-      "no AMQPServer configured");
+      "no AMQPServer configured, disabling module");
+
+    amqp_engine = FALSE;
+
+    (void) close(amqp_logfd);
+    amqp_logfd = -1;
+
+    return 0;
   }
+
+  amqp_pool = make_sub_pool(session.pool);
+  pr_pool_tag(amqp_pool, MOD_AMQP_VERSION);
 
   while (c != NULL) {
     pr_signals_handle();
@@ -642,8 +1014,22 @@ static int amqp_sess_init(void) {
 
     (void) close(amqp_logfd);
     amqp_logfd = -1;
+    return 0;
   }
 
+  c = find_config(main_server->conf, CONF_PARAM, "AMQPOptions", FALSE);
+  while (c != NULL) {
+    unsigned long opts = 0;
+
+    pr_signals_handle();
+
+    opts = *((unsigned long *) c->argv[0]);
+    amqp_opts |= opts;
+
+    c = find_config_next(c, c->next, CONF_PARAM, "AMQPOptions", FALSE);
+  }
+
+  jot_logfmt2json = pr_jot_get_logfmt2json(amqp_pool);
   return 0;
 }
 

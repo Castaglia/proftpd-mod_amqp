@@ -38,8 +38,6 @@
 int tests_rmpath(pool *p, const char *path);
 int tests_stubs_set_next_cmd(cmd_rec *cmd);
 
-Suite *tests_get_rabbitmq_suite(void);
-
 unsigned int recvd_signal_flags;
 extern pid_t mpid;
 extern server_rec *main_server;

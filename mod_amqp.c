@@ -35,7 +35,6 @@
 #define AMQP_DEFAULT_USERNAME		"guest"
 #define AMQP_DEFAULT_PASSWORD		"guest"
 #define AMQP_DEFAULT_EXCHANGE		""
-#define AMQP_DEFAULT_ROUTING_KEY	""
 
 extern xaset_t *server_list;
 
@@ -240,6 +239,10 @@ static int amqp_close_conn(pool *p) {
   int res, reason = AMQP_REPLY_SUCCESS;
   amqp_rpc_reply_t reply;
 
+  if (amqp_conn == NULL) {
+    return 0;
+  }
+
   reply = amqp_channel_close(amqp_conn, amqp_chan, reason);
   if (reply.reply_type != AMQP_RESPONSE_NORMAL) {
     amqp_trace_reply(p, reply, "channel close error");
@@ -316,6 +319,9 @@ static int amqp_send_msg(pool *p, const char *exchange, const char *routing_key,
   mandatory = TRUE;
   immediate = FALSE;
 
+  pr_trace_msg(trace_channel, 17,
+    "publishing AMQP message: channel %u, exchange '%s', routing key '%s'",
+    (unsigned int) amqp_chan, exchange, routing_key);
   res = amqp_basic_publish(amqp_conn, amqp_chan,
     amqp_cstring_bytes(exchange),
     amqp_cstring_bytes(routing_key),
@@ -527,12 +533,13 @@ static void log_event(amqp_channel_t chan, config_rec *c, cmd_rec *cmd) {
   const char *fmt_name = NULL;
   char *payload = NULL;
   size_t payload_len = 0;
-  unsigned char *log_fmt, *exchange_fmt;
+  unsigned char *log_fmt, *exchange_fmt, *routing_fmt;
 
   jot_filters = c->argv[0];
   fmt_name = c->argv[1];
   log_fmt = c->argv[2];
   exchange_fmt = c->argv[3];
+  routing_fmt = c->argv[4];
 
   if (jot_filters == NULL ||
       fmt_name == NULL ||
@@ -590,7 +597,8 @@ static void log_event(amqp_channel_t chan, config_rec *c, cmd_rec *cmd) {
 
       } else {
         (void) pr_log_writefile(amqp_logfd, MOD_AMQP_VERSION,
-          "error resolving AMQP exchange format: %s", strerror(errno));
+          "error resolving AMQP exchange format '%s': %s", exchange_fmt,
+          strerror(errno));
         exchange = AMQP_DEFAULT_EXCHANGE;
       }
 
@@ -598,16 +606,45 @@ static void log_event(amqp_channel_t chan, config_rec *c, cmd_rec *cmd) {
       exchange = AMQP_DEFAULT_EXCHANGE;
     }
 
-    routing_key = AMQP_DEFAULT_ROUTING_KEY;
+    if (routing_fmt != NULL) {
+      struct amqp_buffer *rb;
+      char routing_buf[1024];
+
+      rb = pcalloc(tmp_pool, sizeof(struct amqp_buffer));
+      rb->bufsz = rb->buflen = sizeof(routing_buf)-1;
+      rb->ptr = rb->buf = routing_buf;
+
+      jot_ctx->log = rb;
+
+      res = pr_jot_resolve_logfmt(tmp_pool, cmd, NULL, routing_fmt, jot_ctx,
+        resolve_on_meta, NULL, resolve_on_other);
+      if (res == 0) {
+        size_t routing_buflen;
+
+        routing_buflen = rb->bufsz - rb->buflen;
+        routing_key = pstrndup(tmp_pool, routing_buf, routing_buflen);
+
+      } else {
+        (void) pr_log_writefile(amqp_logfd, MOD_AMQP_VERSION,
+          "error resolving AMQP routing key format '%s': %s", routing_fmt,
+          strerror(errno));
+        routing_key = fmt_name;
+      }
+
+    } else {
+      routing_key = fmt_name;
+    }
+
     res = amqp_send_msg(cmd->tmp_pool, exchange, routing_key, payload,
       payload_len);
     if (res < 0) {
       (void) pr_log_writefile(amqp_logfd, MOD_AMQP_VERSION,
-        "error publishing log message to '%s': %s", exchange, strerror(errno));
+        "error publishing log message to '%s#%s': %s", exchange, routing_key,
+        strerror(errno));
 
     } else {
-      pr_trace_msg(trace_channel, 17, "published log message to '%s'",
-        exchange);
+      pr_trace_msg(trace_channel, 17, "published log message to '%s#%s'",
+        exchange, routing_key);
     }
   }
 
@@ -658,18 +695,65 @@ MODRET set_amqplog(cmd_rec *cmd) {
   return PR_HANDLED(cmd);
 }
 
-/* usage: AMQPLogOnEvent events log-fmt [exchange] */
+static unsigned char *parse_jotted_key(pool *p, const char *text) {
+  int res;
+  pool *tmp_pool;
+  pr_jot_ctx_t *jot_ctx;
+  pr_jot_parsed_t *jot_parsed;
+  unsigned char fmtbuf[1024], *fmt = NULL;
+  size_t fmtlen;
+
+  tmp_pool = make_sub_pool(p);
+  jot_ctx = pcalloc(tmp_pool, sizeof(pr_jot_ctx_t));
+  jot_parsed = pcalloc(tmp_pool, sizeof(pr_jot_parsed_t));
+  jot_parsed->bufsz = jot_parsed->buflen = sizeof(fmtbuf)-1;
+  jot_parsed->ptr = jot_parsed->buf = fmtbuf;
+
+  jot_ctx->log = jot_parsed;
+
+  res = pr_jot_parse_logfmt(tmp_pool, text, jot_ctx,
+    pr_jot_parse_on_meta, pr_jot_parse_on_unknown, pr_jot_parse_on_other, 0);
+  destroy_pool(tmp_pool);
+
+  if (res < 0) {
+    return NULL;
+  }
+
+  fmtlen = jot_parsed->bufsz - jot_parsed->buflen;
+  fmtbuf[fmtlen] = '\0';
+  fmt = (unsigned char *) pstrndup(p, (char *) fmtbuf, fmtlen);
+  return fmt;
+}
+
+/* usage: AMQPLogOnEvent "none"|events log-fmt [exchange ...] [routing ...] */
 MODRET set_amqplogonevent(cmd_rec *cmd) {
+  register unsigned int i;
   config_rec *c, *logfmt_config;
   const char *fmt_name, *rules;
-  char *exchange = NULL;
-  unsigned char *log_fmt = NULL;
+  char *exchange = NULL, *routing_key = NULL;
+  unsigned char *log_fmt = NULL, *exchange_fmt = NULL, *routing_fmt = NULL;
   pr_jot_filters_t *jot_filters;
 
-  CHECK_ARGS(cmd, 2);
-  CHECK_CONF(cmd, CONF_ROOT|CONF_GLOBAL|CONF_VIRTUAL);
+  CHECK_CONF(cmd, CONF_ROOT|CONF_GLOBAL|CONF_VIRTUAL|CONF_ANON|CONF_DIR);
 
-  c = add_config_param(cmd->argv[0], 4, NULL, NULL, NULL, NULL);
+  if (cmd->argc < 3 ||
+      cmd->argc > 7) {
+
+    if (cmd->argc == 2 &&
+        strcasecmp(cmd->argv[1], "none") == 0) {
+       c = add_config_param(cmd->argv[0], 5, NULL, NULL, NULL, NULL, NULL);
+       c->flags |= CF_MERGEDOWN;
+       return PR_HANDLED(cmd);
+    }
+
+    CONF_ERROR(cmd, "wrong number of parameters");
+  }
+
+  if ((cmd->argc - 3) % 2 != 0) {
+    CONF_ERROR(cmd, "wrong number of parameters");
+  }
+
+  c = add_config_param(cmd->argv[0], 5, NULL, NULL, NULL, NULL, NULL);
 
   rules = cmd->argv[1];
   jot_filters = pr_jot_filters_create(c->pool, rules,
@@ -682,8 +766,17 @@ MODRET set_amqplogonevent(cmd_rec *cmd) {
 
   fmt_name = cmd->argv[2];
 
-  if (cmd->argc == 4) {
-    exchange = cmd->argv[3];
+  for (i = 3; i < cmd->argc; i += 2) {
+    if (strcmp(cmd->argv[i], "exchange") == 0) {
+      exchange = cmd->argv[i+1];
+
+    } else if (strcmp(cmd->argv[i], "routing") == 0) {
+      routing_key = cmd->argv[i+1];
+
+    } else {
+      CONF_ERROR(cmd, pstrcat(cmd->tmp_pool,
+        ": unknown AMQPLogOnEvent parameter: ", cmd->argv[i], NULL));
+    }
   }
 
   /* Make sure that the given LogFormat name is known. */
@@ -706,10 +799,29 @@ MODRET set_amqplogonevent(cmd_rec *cmd) {
       "' configured", NULL));
   }
 
+  if (exchange != NULL) {
+    exchange_fmt = parse_jotted_key(c->pool, exchange);
+    if (exchange_fmt == NULL) {
+      CONF_ERROR(cmd, pstrcat(cmd->tmp_pool,
+        "error parsing AMQPLogEvent parameter '", exchange, "': ",
+        strerror(errno), NULL));
+    }
+  }
+
+  if (routing_key != NULL) {
+    routing_fmt = parse_jotted_key(c->pool, routing_key);
+    if (routing_fmt == NULL) {
+      CONF_ERROR(cmd, pstrcat(cmd->tmp_pool,
+        "error parsing AMQPLogEvent parameter '", routing_key, "': ",
+        strerror(errno), NULL));
+    }
+  }
+
   c->argv[0] = jot_filters;
   c->argv[1] = pstrdup(c->pool, fmt_name);
   c->argv[2] = log_fmt;
-  c->argv[3] = exchange;
+  c->argv[3] = exchange_fmt;
+  c->argv[4] = routing_fmt;
 
   return PR_HANDLED(cmd);
 }

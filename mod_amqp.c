@@ -62,6 +62,7 @@ static amqp_connection_state_t amqp_conn;
 static amqp_channel_t amqp_chan;
 
 static const char *amqp_app_id = NULL;
+static const char *amqp_msg_expires = NULL;
 static const char *amqp_msg_type = NULL;
 
 /* AMQPOptions */
@@ -287,6 +288,14 @@ static int amqp_send_msg(pool *p, const char *exchange, const char *routing_key,
   props._flags |= AMQP_BASIC_TYPE_FLAG;
   props.type = amqp_cstring_bytes(amqp_msg_type);
 
+  /* Note: RabbitMQ expects/implements this as a value in millseconds:
+   *  https://www.rabbitmq.com/ttl.html
+   */
+  if (amqp_msg_expires != NULL) {
+    props._flags |= AMQP_BASIC_EXPIRATION_FLAG;
+    props.expiration = amqp_cstring_bytes(amqp_msg_expires);
+  }
+
   props._flags |= AMQP_BASIC_DELIVERY_MODE_FLAG;
   if (amqp_opts & AMQP_OPT_PERSISTENT_DELIVERY) {
     props.delivery_mode = AMQP_DELIVERY_PERSISTENT;
@@ -295,10 +304,7 @@ static int amqp_send_msg(pool *p, const char *exchange, const char *routing_key,
     props.delivery_mode = AMQP_DELIVERY_NONPERSISTENT;
   }
 
-  /* TODO: Support AMQP_BASIC_EXPIRATION_FLAG, for msg expiration; default
-   * to 5 min?
-   *
-   * Note: While it might be tempting to use AMQP_BASIC_USER_ID_FLAG,
+  /* Note: While it might be tempting to use AMQP_BASIC_USER_ID_FLAG,
    * it will not work as desired.  RabbitMQ will verify this user ID againt
    * that used for the connection, which is not what we want.
    */
@@ -846,6 +852,26 @@ MODRET set_amqplogonevent(cmd_rec *cmd) {
   return PR_HANDLED(cmd);
 }
 
+/* usage: AMQPMessageExpires millis */
+MODRET set_amqpmessageexpires(cmd_rec *cmd) {
+  unsigned long expires = 0;
+  char *ptr = NULL;
+
+  CHECK_ARGS(cmd, 1);
+  CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
+
+  expires = strtoul(cmd->argv[1], &ptr, 10);
+  if (ptr && *ptr) {
+    CONF_ERROR(cmd, "invalid parameter");
+  }
+
+  /* The librabbitmq API for message expiration uses string, surprisingly;
+   * we thus just copy the given parameter.
+   */
+  (void) add_config_param_str(cmd->argv[0], 1, cmd->argv[1]);
+  return PR_HANDLED(cmd);
+}
+
 /* usage: AMQPMessageType name */
 MODRET set_amqpmessagetype(cmd_rec *cmd) {
   CHECK_ARGS(cmd, 1);
@@ -1032,6 +1058,7 @@ static void amqp_sess_reinit_ev(const void *event_data, void *user_data) {
   amqp_engine = FALSE;
   amqp_opts = 0UL;
   amqp_app_id = NULL;
+  amqp_msg_expires = NULL;
   amqp_msg_type = NULL;
 
   res = amqp_sess_init();
@@ -1168,6 +1195,11 @@ static int amqp_sess_init(void) {
     amqp_app_id = AMQP_DEFAULT_APP_ID;
   }
 
+  c = find_config(main_server->conf, CONF_PARAM, "AMQPMessageExpires", FALSE);
+  if (c != NULL) {
+    amqp_msg_expires = c->argv[0];
+  }
+
   c = find_config(main_server->conf, CONF_PARAM, "AMQPMessageType", FALSE);
   if (c != NULL) {
     amqp_msg_type = c->argv[0];
@@ -1200,6 +1232,7 @@ static conftable amqp_conftab[] = {
   { "AMQPEngine",		set_amqpengine,		NULL },
   { "AMQPLog",			set_amqplog,		NULL },
   { "AMQPLogOnEvent",		set_amqplogonevent,	NULL },
+  { "AMQPMessageExpires",	set_amqpmessageexpires,	NULL },
   { "AMQPMessageType",		set_amqpmessagetype,	NULL },
   { "AMQPOptions",		set_amqpoptions,	NULL },
   { "AMQPServer",		set_amqpserver,		NULL },

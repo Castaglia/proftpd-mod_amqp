@@ -30,6 +30,9 @@
 #include "jot.h"
 #include <amqp.h>
 #include <amqp_tcp_socket.h>
+#ifdef HAVE_AMQP_SSL_SOCKET_H
+# include <amqp_ssl_socket.h>
+#endif
 
 /* Newer versions of librabbitmq define these delivery mode values via enum. */
 #ifndef HAVE_RABBITMQ_DELIVERY_MODE
@@ -148,10 +151,13 @@ static int amqp_open_conn(pool *p, config_rec *c) {
     return -1;
   }
 
-  /* XXX TODO This is where we would use e.g. amqp_ssl_socket_new() to
-   * create the sock, set the TLS options on it, etc.
-   */
-  sock = amqp_tcp_socket_new(amqp_conn);
+  if (c->argc == 8) {
+    sock = amqp_ssl_socket_new(amqp_conn);
+
+  } else {
+    sock = amqp_tcp_socket_new(amqp_conn);
+  }
+
   if (sock == NULL) {
     (void) pr_log_writefile(amqp_logfd, MOD_AMQP_VERSION,
       "error allocating memory for AMQP socket");
@@ -160,6 +166,40 @@ static int amqp_open_conn(pool *p, config_rec *c) {
 
     errno = ENOMEM;
     return -1;
+  }
+
+  if (c->argc == 8) {
+    const char *ssl_cert = NULL, *ssl_key = NULL, *ssl_ca = NULL;
+    int res, ssl_verify = TRUE;
+
+    ssl_cert = c->argv[4];
+    ssl_key = c->argv[5];
+    ssl_ca = c->argv[6];
+    ssl_verify = *((int *) c->argv[7]);
+
+    if (ssl_cert != NULL &&
+        ssl_key != NULL) {
+      pr_trace_msg(trace_channel, 12,
+        "using SSL client certificate '%s', key '%s'", ssl_cert, ssl_key);
+      res = amqp_ssl_socket_set_key(sock, ssl_cert, ssl_key);
+      if (res != AMQP_STATUS_OK) {
+        pr_trace_msg(trace_channel, 3,
+          "error setting SSL client certificate: %s", amqp_error_string2(res));
+      }
+    }
+
+    if (ssl_ca != NULL) {
+      pr_trace_msg(trace_channel, 12, "using SSL CA '%s'", ssl_ca);
+      res = amqp_ssl_socket_set_cacert(sock, ssl_ca);
+      if (res != AMQP_STATUS_OK) {
+        pr_trace_msg(trace_channel, 3,
+          "error setting SSL CA: %s", amqp_error_string2(res));
+      }
+    }
+
+    pr_trace_msg(trace_channel, 12, "%s SSL verification",
+      ssl_verify ? "enabling" : "disabling");
+    amqp_ssl_socket_set_verify(sock, ssl_verify);
   }
 
   addrs = c->argv[0];
@@ -181,7 +221,7 @@ static int amqp_open_conn(pool *p, config_rec *c) {
       break;
     }
 
-    pr_trace_msg(trace_channel, 6, "error connecting to %s:%u: %s", ip_addr,
+    pr_trace_msg(trace_channel, 2, "error connecting to %s:%u: %s", ip_addr,
       port, amqp_error_string2(res));
   }
 
@@ -911,17 +951,24 @@ MODRET set_amqpoptions(cmd_rec *cmd) {
   return PR_HANDLED(cmd);
 }
 
-/* usage: AMQPServer host[:port] [vhost] [username] [password] */
+/* usage: AMQPServer host[:port] [vhost] [username] [password]
+ *   [ssl-cert:<path>] [ssl-key:<path>] [ssl-ca:/path] [ssl-verify:false]
+ */
 MODRET set_amqpserver(cmd_rec *cmd) {
   register unsigned int i;
   config_rec *c;
   char *server, *vhost = NULL, *username = NULL, *password = NULL, *ptr;
+  char *ssl_cert = NULL, *ssl_key = NULL, *ssl_ca = NULL;
   size_t server_len;
-  int port = AMQP_PROTOCOL_PORT;
+  int port = AMQP_PROTOCOL_PORT, ssl_verify = -1;
   const pr_netaddr_t *addr;
   array_header *addrs;
 
-  CHECK_ARGS(cmd, 1);
+  if (cmd->argc < 2 ||
+      cmd->argc > 9) {
+    CONF_ERROR(cmd, "wrong number of parameters");
+  }
+
   CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
 
   server = pstrdup(cmd->tmp_pool, cmd->argv[1]);
@@ -953,24 +1000,106 @@ MODRET set_amqpserver(cmd_rec *cmd) {
     }
   }
 
-  if (cmd->argc == 3) {
+  if (cmd->argc >= 3) {
     vhost = cmd->argv[2];
     if (strcmp(vhost, "") == 0) {
       vhost = NULL;
     }
   }
 
-  if (cmd->argc == 4) {
+  if (cmd->argc >= 4) {
     username = cmd->argv[3];
     if (strcmp(username, "") == 0) {
       username = NULL;
     }
   }
 
-  if (cmd->argc == 5) {
+  if (cmd->argc >= 5) {
     password = cmd->argv[4];
     if (strcmp(password, "") == 0) {
       password = NULL;
+    }
+  }
+
+  if (cmd->argc >= 6) {
+    for (i = 5; i < cmd->argc; i++) {
+      if (strncmp(cmd->argv[i], "ssl-cert:", 9) == 0) {
+        char *path;
+
+        path = cmd->argv[i];
+
+        /* Advance past the "ssl-cert:" prefix. */
+        path += 9;
+
+        /* Check the file exists! */
+        if (file_exists2(cmd->tmp_pool, path) == TRUE) {
+          ssl_cert = path;
+
+        } else {
+          pr_log_pri(PR_LOG_NOTICE, MOD_AMQP_VERSION
+            ": %s: SSL certificate '%s': %s", (char *) cmd->argv[0], path,
+            strerror(ENOENT));
+        }
+
+      } else if (strncmp(cmd->argv[i], "ssl-key:", 8) == 0) {
+        char *path;
+
+        path = cmd->argv[i];
+
+        /* Advance past the "ssl-key:" prefix. */
+        path += 8;
+
+        /* Check the file exists! */
+        if (file_exists2(cmd->tmp_pool, path) == TRUE) {
+          ssl_key = path;
+
+        } else {
+          pr_log_pri(PR_LOG_NOTICE, MOD_AMQP_VERSION
+            ": %s: SSL certificate key '%s': %s", (char *) cmd->argv[0], path,
+            strerror(ENOENT));
+        }
+
+      } else if (strncmp(cmd->argv[i], "ssl-ca:", 7) == 0) {
+        char *path;
+
+        path = cmd->argv[i];
+
+        /* Advance past the "ssl-ca:" prefix. */
+        path += 7;
+
+        /* Check the file exists! */
+        if (file_exists2(cmd->tmp_pool, path) == TRUE) {
+          ssl_ca = path;
+
+        } else {
+          pr_log_pri(PR_LOG_NOTICE, MOD_AMQP_VERSION
+            ": %s: SSL CA '%s': %s", (char *) cmd->argv[0], path,
+            strerror(ENOENT));
+        }
+
+      } else if (strncmp(cmd->argv[i], "ssl-verify:", 11) == 0) {
+        char *verify;
+        int res;
+
+        verify = cmd->argv[i];
+
+        /* Advance past the "ssl-verify:" prefix. */
+        verify += 11;
+
+        res = pr_str_is_boolean(verify);
+        if (res < 0) {
+          pr_log_pri(PR_LOG_NOTICE, MOD_AMQP_VERSION
+            ": %s: SSL verification '%s': %s", (char *) cmd->argv[0], verify,
+            strerror(errno));
+
+        } else {
+          ssl_verify = res;
+        }
+
+      } else {
+        CONF_ERROR(cmd, pstrcat(cmd->tmp_pool,
+          "unknown AMQPServer parameter: ", cmd->argv[i], NULL));
+      }
     }
   }
 
@@ -982,7 +1111,20 @@ MODRET set_amqpserver(cmd_rec *cmd) {
    * bad thing.
    */
 
-  c = add_config_param(cmd->argv[0], 5, NULL, NULL, NULL, NULL, NULL);
+  /* Note that we indicate, to the amqp_open_conn() function, whether to use
+   * SSL or not based on the number of args in this config_rec.
+   */
+  if (ssl_cert != NULL ||
+      ssl_key != NULL ||
+      ssl_ca != NULL ||
+      ssl_verify != -1) {
+    c = add_config_param(cmd->argv[0], 8, NULL, NULL, NULL, NULL, NULL, NULL,
+      NULL, NULL);
+
+  } else {
+    /* No SSL parameters used. */
+    c = add_config_param(cmd->argv[0], 4, NULL, NULL, NULL, NULL);
+  }
 
   addr = pr_netaddr_get_addr(c->pool, server, &addrs);
   if (addr == NULL) {
@@ -1007,6 +1149,14 @@ MODRET set_amqpserver(cmd_rec *cmd) {
   c->argv[1] = pstrdup(c->pool, vhost);
   c->argv[2] = pstrdup(c->pool, username);
   c->argv[3] = pstrdup(c->pool, password);
+
+  if (c->argc == 8) {
+    c->argv[4] = pstrdup(c->pool, ssl_cert);
+    c->argv[5] = pstrdup(c->pool, ssl_key);
+    c->argv[6] = pstrdup(c->pool, ssl_ca);
+    c->argv[7] = palloc(c->pool, sizeof(int));
+    *((int *) c->argv[7]) = ssl_verify;
+  }
 
   return PR_HANDLED(cmd);
 }
@@ -1079,8 +1229,15 @@ static int amqp_init(void) {
     NULL);
 #endif
 
-/* XXX Log the different discovered library versions here */
-  pr_log_debug(DEBUG2, MOD_AMQP_VERSION ": using %s", amqp_version());
+  if (amqp_version_number() != AMQP_VERSION) {
+    pr_log_pri(PR_LOG_NOTICE, MOD_AMQP_VERSION
+      ": compiled against '%s', but running using '%s'",
+      AMQP_VERSION_STRING, amqp_version());
+
+  } else {
+    pr_log_debug(DEBUG2, MOD_AMQP_VERSION ": using %s", amqp_version());
+  }
+
   return 0;
 }
 

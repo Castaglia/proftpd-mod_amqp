@@ -30,8 +30,6 @@ AC_ISC_POSIX
 AC_MINIX
 AC_PROG_MAKE_SET
 
-AC_CHECK_HEADERS(uuid/uuid.h)
-
 dnl Need to support/handle the --with-includes and --with-libraries options
 AC_ARG_WITH(includes,
   [AC_HELP_STRING(
@@ -65,15 +63,9 @@ AC_ARG_WITH(libraries,
     LDFLAGS="$LDFLAGS $ac_build_addl_libdirs"
   ])
 
-dnl rabbitmq-c support
-AC_CHECK_HEADER(amqp.h,
-  [
-    AC_DEFINE(HAVE_RABBITMQ_AMQP_H, 1, [Define if rabbitmq-c amqp.h is present.])
-  ]
-)
-
 AC_HEADER_STDC
-AC_CHECK_HEADERS(stdlib.h unistd.h limits.h fcntl.h)
+AC_CHECK_HEADERS(stdlib.h uuid/uuid.h unistd.h limits.h fcntl.h)
+AC_CHECK_HEADERS(amqp.h amqp_ssl_socket.h)
 
 AC_MSG_CHECKING([for librabbitmq AMQP_DELIVERY_PERSISTENT enum])
 AC_TRY_COMPILE(
@@ -91,6 +83,32 @@ AC_TRY_COMPILE(
     AC_MSG_RESULT(no)
   ]
 )
+
+dnl Splice out -lsupp, since that library hasn't been built yet
+saved_libs="$LIBS"
+LIBS=`echo "$LIBS" | sed -e 's/-lsupp//g'`;
+LIBS="$LIBS -lrabbitmq"
+
+AC_MSG_CHECKING([for librabbitmq amqp_ssl_socket_new])
+AC_TRY_LINK(
+  [
+    #ifdef HAVE_RABBITMQ_AMQP_H
+    # include <amqp.h>
+    #endif
+  ],
+  [
+    amqp_connection_state_t conn;
+    (void) amqp_ssl_socket_new(conn);
+  ],
+  [
+    AC_MSG_RESULT(yes)
+    AC_DEFINE(HAVE_AMQP_SSL_SOCKET_NEW 1, [Define if you have librabbitmq amqp_ssl_socket_new])
+  ],
+  [
+    AC_MSG_RESULT(no)
+  ]
+)
+LIBS="$saved_libs"
 
 INCLUDES="$ac_build_addl_includes"
 LIBDIRS="$ac_build_addl_libdirs"

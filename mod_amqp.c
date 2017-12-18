@@ -151,7 +151,7 @@ static int amqp_open_conn(pool *p, config_rec *c) {
     return -1;
   }
 
-  if (c->argc == 8) {
+  if (c->argc == 10) {
     sock = amqp_ssl_socket_new(amqp_conn);
 
   } else {
@@ -168,14 +168,16 @@ static int amqp_open_conn(pool *p, config_rec *c) {
     return -1;
   }
 
-  if (c->argc == 8) {
+  if (c->argc == 10) {
     const char *ssl_cert = NULL, *ssl_key = NULL, *ssl_ca = NULL;
-    int res, ssl_verify = TRUE;
+    int res, ssl_verify = -1, ssl_verify_hostname = -1, ssl_verify_peer = -1;
 
     ssl_cert = c->argv[4];
     ssl_key = c->argv[5];
     ssl_ca = c->argv[6];
     ssl_verify = *((int *) c->argv[7]);
+    ssl_verify_hostname = *((int *) c->argv[8]);
+    ssl_verify_peer = *((int *) c->argv[9]);
 
     if (ssl_cert != NULL &&
         ssl_key != NULL) {
@@ -197,9 +199,49 @@ static int amqp_open_conn(pool *p, config_rec *c) {
       }
     }
 
-    pr_trace_msg(trace_channel, 12, "%s SSL verification",
-      ssl_verify ? "enabling" : "disabling");
-    amqp_ssl_socket_set_verify(sock, ssl_verify);
+    if (ssl_verify_hostname >= 0 ||
+        ssl_verify_peer >= 0) {
+
+#ifdef HAVE_AMQP_SSL_SOCKET_SET_VERIFY_HOSTNAME
+      if (ssl_verify_hostname >= 0) {
+        pr_trace_msg(trace_channel, 12, "%s SSL hostname verification",
+          ssl_verify_hostname ? "enabling" : "disabling");
+        amqp_ssl_socket_set_verify_hostname(sock, ssl_verify_hostname);
+      }
+#endif
+
+#ifdef HAVE_AMQP_SSL_SOCKET_SET_VERIFY_PEER
+      if (ssl_verify_peer >= 0) {
+        pr_trace_msg(trace_channel, 12, "%s SSL peer verification",
+          ssl_verify_peer ? "enabling" : "disabling");
+        amqp_ssl_socket_set_verify_peer(sock, ssl_verify_peer);
+      }
+#endif
+
+#if !defined(HAVE_AMQP_SSL_SOCKET_SET_VERIFY_HOSTNAME) && \
+    !defined(HAVE_AMQP_SSL_SOCKET_SET_VERIFY_PEER)
+      pr_trace_msg(trace_channel, 12, "%s SSL verification",
+        ssl_verify_peer ? "enabling" : "disabling");
+      amqp_ssl_socket_set_verify(sock, ssl_verify_peer);
+#endif
+
+    } else {
+      pr_trace_msg(trace_channel, 12, "%s SSL verification",
+        ssl_verify ? "enabling" : "disabling");
+
+#ifdef HAVE_AMQP_SSL_SOCKET_SET_VERIFY_HOSTNAME
+      amqp_ssl_socket_set_verify_hostname(sock, ssl_verify);
+#endif
+
+#ifdef HAVE_AMQP_SSL_SOCKET_SET_VERIFY_PEER
+      amqp_ssl_socket_set_verify_peer(sock, ssl_verify);
+#endif
+
+#if !defined(HAVE_AMQP_SSL_SOCKET_SET_VERIFY_HOSTNAME) && \
+    !defined(HAVE_AMQP_SSL_SOCKET_SET_VERIFY_PEER)
+      amqp_ssl_socket_set_verify(sock, ssl_verify);
+#endif
+    }
   }
 
   addrs = c->argv[0];
@@ -953,6 +995,7 @@ MODRET set_amqpoptions(cmd_rec *cmd) {
 
 /* usage: AMQPServer host[:port] [vhost] [username] [password]
  *   [ssl-cert:<path>] [ssl-key:<path>] [ssl-ca:/path] [ssl-verify:false]
+ *   [ssl-verify-hostname:false] [ssl-verify-peer:false]
  */
 MODRET set_amqpserver(cmd_rec *cmd) {
   register unsigned int i;
@@ -960,12 +1003,13 @@ MODRET set_amqpserver(cmd_rec *cmd) {
   char *server, *vhost = NULL, *username = NULL, *password = NULL, *ptr;
   char *ssl_cert = NULL, *ssl_key = NULL, *ssl_ca = NULL;
   size_t server_len;
-  int port = AMQP_PROTOCOL_PORT, ssl_verify = -1;
+  int port = AMQP_PROTOCOL_PORT;
+  int ssl_verify = -1, ssl_verify_hostname = -1, ssl_verify_peer = -1;
   const pr_netaddr_t *addr;
   array_header *addrs;
 
   if (cmd->argc < 2 ||
-      cmd->argc > 9) {
+      cmd->argc > 11) {
     CONF_ERROR(cmd, "wrong number of parameters");
   }
 
@@ -1096,6 +1140,48 @@ MODRET set_amqpserver(cmd_rec *cmd) {
           ssl_verify = res;
         }
 
+      } else if (strncmp(cmd->argv[i], "ssl-verify-hostname:", 20) == 0) {
+#ifdef HAVE_AMQP_SSL_SOCKET_SET_VERIFY_HOSTNAME
+        char *verify;
+        int res;
+
+        verify = cmd->argv[i];
+
+        /* Advance past the "ssl-verify-hostname:" prefix. */
+        verify += 20;
+
+        res = pr_str_is_boolean(verify);
+        if (res < 0) {
+          pr_log_pri(PR_LOG_NOTICE, MOD_AMQP_VERSION
+            ": %s: SSL hostname verification '%s': %s", (char *) cmd->argv[0],
+            verify, strerror(errno));
+
+        } else {
+          ssl_verify_hostname = res;
+        }
+#endif /* HAVE_AMQP_SSL_SOCKET_SET_VERIFY_HOSTNAME */
+
+      } else if (strncmp(cmd->argv[i], "ssl-verify-peer:", 16) == 0) {
+#ifdef HAVE_AMQP_SSL_SOCKET_SET_VERIFY_PEER
+        char *verify;
+        int res;
+
+        verify = cmd->argv[i];
+
+        /* Advance past the "ssl-verify-peer:" prefix. */
+        verify += 16;
+
+        res = pr_str_is_boolean(verify);
+        if (res < 0) {
+          pr_log_pri(PR_LOG_NOTICE, MOD_AMQP_VERSION
+            ": %s: SSL peer verification '%s': %s", (char *) cmd->argv[0],
+            verify, strerror(errno));
+
+        } else {
+          ssl_verify_peer = res;
+        }
+#endif /* HAVE_AMQP_SSL_SOCKET_SET_VERIFY_PEER */
+
       } else {
         CONF_ERROR(cmd, pstrcat(cmd->tmp_pool,
           "unknown AMQPServer parameter: ", cmd->argv[i], NULL));
@@ -1117,8 +1203,10 @@ MODRET set_amqpserver(cmd_rec *cmd) {
   if (ssl_cert != NULL ||
       ssl_key != NULL ||
       ssl_ca != NULL ||
-      ssl_verify != -1) {
-    c = add_config_param(cmd->argv[0], 8, NULL, NULL, NULL, NULL, NULL, NULL,
+      ssl_verify != -1 ||
+      ssl_verify_hostname != -1 ||
+      ssl_verify_peer != -1) {
+    c = add_config_param(cmd->argv[0], 10, NULL, NULL, NULL, NULL, NULL, NULL,
       NULL, NULL);
 
   } else {
@@ -1150,12 +1238,16 @@ MODRET set_amqpserver(cmd_rec *cmd) {
   c->argv[2] = pstrdup(c->pool, username);
   c->argv[3] = pstrdup(c->pool, password);
 
-  if (c->argc == 8) {
+  if (c->argc == 10) {
     c->argv[4] = pstrdup(c->pool, ssl_cert);
     c->argv[5] = pstrdup(c->pool, ssl_key);
     c->argv[6] = pstrdup(c->pool, ssl_ca);
     c->argv[7] = palloc(c->pool, sizeof(int));
     *((int *) c->argv[7]) = ssl_verify;
+    c->argv[8] = palloc(c->pool, sizeof(int));
+    *((int *) c->argv[8]) = ssl_verify_hostname;
+    c->argv[9] = palloc(c->pool, sizeof(int));
+    *((int *) c->argv[9]) = ssl_verify_peer;
   }
 
   return PR_HANDLED(cmd);

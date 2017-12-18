@@ -50,6 +50,12 @@
 /* Define if you have the amqp_ssl_socket_new function.  */
 #undef HAVE_AMQP_SSL_SOCKET_NEW
 
+/* Define if you have the amqp_ssl_socket_set_verify_hostname function.  */
+#undef HAVE_AMQP_SSL_SOCKET_SET_VERIFY_HOSTNAME
+
+/* Define if you have the amqp_ssl_socket_set_verify_peer function.  */
+#undef HAVE_AMQP_SSL_SOCKET_SET_VERIFY_PEER
+
 /* Define if you have the <uuid/uuid.h> header.  */
 #undef HAVE_UUID_UUID_H
 

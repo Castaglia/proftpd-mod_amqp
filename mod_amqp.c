@@ -911,7 +911,7 @@ MODRET set_amqplogonevent(cmd_rec *cmd) {
     exchange_fmt = parse_jotted_key(c->pool, exchange);
     if (exchange_fmt == NULL) {
       CONF_ERROR(cmd, pstrcat(cmd->tmp_pool,
-        "error parsing AMQPLogEvent parameter '", exchange, "': ",
+        "error parsing AMQPLogOnEvent parameter '", exchange, "': ",
         strerror(errno), NULL));
     }
   }

@@ -57,6 +57,15 @@ questions, concerns, or suggestions regarding this module.
 <strong>Compatibility:</strong> 1.3.6rc5 and later
 
 <p>
+The <code>mod_amqp</code> module automatically sets the <code>app_id</code>
+property to "proftpd" on each message published.  Use the
+<code>AMQPApplicationID</code> directive to specify a different value to use,
+<i>e.g.</i>:
+<pre>
+  AMQPApplicationID mod_amqp
+</pre>
+
+<p>
 <hr>
 <h3><a name="AMQPEngine">AMQPEngine</a></h3>
 <strong>Syntax:</strong> AMQPEngine <em>on|off</em><br>
@@ -169,6 +178,15 @@ that the <code>ExtendedLog</code> directive supports.
 <strong>Context:</strong> server config, <code>&lt;VirtualHost&gt;</code>, <code>&lt;Global&gt;</code><br>
 <strong>Module:</strong> mod_amqp<br>
 <strong>Compatibility:</strong> 1.3.6rc5 and later
+
+<p>
+The <code>mod_amqp</code> module automatically sets the <code>type</code>
+property to "log" on each message published.  Use the
+<code>AMQPMessageType</code> directive to specify a different value to use,
+<i>e.g.</i>:
+<pre>
+  AMQPMessageType ftpd
+</pre>
 
 <p>
 <hr>
@@ -528,7 +546,7 @@ matters are the <code>LogFormat</code> variables which appear in the directive.
 <p>
 <hr>
 <font size=2><b><i>
-&copy; Copyright 2017 The ProFTPD Project<br>
+&copy; Copyright 2017 TJ Saunders<br>
  All Rights Reserved<br>
 </i></b></font>
 <hr>

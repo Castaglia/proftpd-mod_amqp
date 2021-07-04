@@ -1,6 +1,6 @@
 /*
  * ProFTPD - mod_amqp API testsuite
- * Copyright (c) 2017 TJ Saunders
+ * Copyright (c) 2017-2021 TJ Saunders
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -60,17 +60,17 @@ int main(int argc, char *argv[]) {
    */
   srunner_set_log(runner, log_file);
 
-  requested = getenv("PROXY_TEST_SUITE");
-  if (requested) {
+  requested = getenv("AMQP_TEST_SUITE");
+  if (requested != NULL) {
     Suite *suite;
 
     suite = tests_get_suite(requested);
-    if (suite) {
+    if (suite != NULL) {
       srunner_add_suite(runner, suite);
 
     } else {
       fprintf(stderr,
-        "No such test suite ('%s') requested via PROXY_TEST_SUITE\n",
+        "No such test suite ('%s') requested via AMQP_TEST_SUITE\n",
         requested);
       return EXIT_FAILURE;
     }
@@ -82,7 +82,7 @@ int main(int argc, char *argv[]) {
       Suite *suite;
 
       suite = (suites[i].get_suite)();
-      if (suite) {
+      if (suite != NULL) {
         srunner_add_suite(runner, suite);
       }
     }
@@ -91,9 +91,10 @@ int main(int argc, char *argv[]) {
   /* Configure the Trace API to write to stderr. */
   pr_trace_use_stderr(TRUE);
 
-  requested = getenv("PROXY_TEST_NOFORK");
-  if (requested) {
+  requested = getenv("AMQP_TEST_NOFORK");
+  if (requested != NULL) {
     srunner_set_fork_status(runner, CK_NOFORK);
+
   } else {
     requested = getenv("CK_DEFAULT_TIMEOUT");
     if (requested == NULL) {

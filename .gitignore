@@ -3,10 +3,11 @@ Makefile
 config.log
 config.status
 autom4te.cache
-mod_kafka.h
+mod_amqp.h
 tests.log
 .libs
 .*.sw*
+*.a
 *.la
 *.lo
 *Tests*.log

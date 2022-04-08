@@ -7,7 +7,6 @@ use strict;
 use File::Path qw(mkpath);
 use File::Spec;
 use IO::Handle;
-use IO::Socket::INET6;
 
 use ProFTPD::TestSuite::FTP;
 use ProFTPD::TestSuite::Utils qw(:auth :config :features :running :test :testsuite);
@@ -119,6 +118,16 @@ sub list_tests {
   return testsuite_get_runnable_tests($TESTS);
 }
 
+sub get_rmq_host {
+  my $rmq_host = 'localhost';
+
+  if (defined($ENV{RABBITMQ_HOST})) {
+    $rmq_host = $ENV{RABBITMQ_HOST};
+  }
+
+  return $rmq_host;
+}
+
 # Note: We only declare 'direct' exchanges for this testing currently
 sub rmq_exchange_declare {
   my $name = shift;
@@ -131,7 +140,7 @@ sub rmq_exchange_declare {
   my $connect_opts = {
   };
 
-  $mq->connect('localhost', $connect_opts);
+  $mq->connect(get_rmq_host(), $connect_opts);
   $mq->channel_open($channel_id);
 
   my $exchange_opts = {
@@ -156,7 +165,7 @@ sub rmq_exchange_delete {
   my $connect_opts = {
   };
 
-  $mq->connect('localhost', $connect_opts);
+  $mq->connect(get_rmq_host(), $connect_opts);
   $mq->channel_open($channel_id);
 
   my $exchange_opts = {
@@ -181,7 +190,7 @@ sub rmq_queue_declare {
   my $connect_opts = {
   };
 
-  $mq->connect('localhost', $connect_opts);
+  $mq->connect(get_rmq_host(), $connect_opts);
   $mq->channel_open($channel_id);
 
   my $queue_opts = {
@@ -211,7 +220,7 @@ sub rmq_queue_delete {
   my $connect_opts = {
   };
 
-  $mq->connect('localhost', $connect_opts);
+  $mq->connect(get_rmq_host(), $connect_opts);
   $mq->channel_open($channel_id);
 
   my $queue_opts = {
@@ -236,7 +245,7 @@ sub rmq_queue_getall {
   my $connect_opts = {
   };
 
-  $mq->connect('localhost', $connect_opts);
+  $mq->connect(get_rmq_host(), $connect_opts);
   $mq->channel_open($channel_id);
 
   my $queue_opts = {
@@ -266,6 +275,8 @@ sub amqp_log_on_event {
   rmq_queue_delete($queue);
   rmq_queue_declare($queue);
 
+  my $amqp_server = get_rmq_host();
+
   my $config = {
     PidFile => $setup->{pid_file},
     ScoreboardFile => $setup->{scoreboard_file},
@@ -275,6 +286,7 @@ sub amqp_log_on_event {
 
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
 
     IfModules => {
       'mod_delay.c' => {
@@ -284,7 +296,7 @@ sub amqp_log_on_event {
       # Note: we need to use arrays here, since order of directives matters.
       'mod_amqp.c' => [
         'AMQPEngine on',
-        'AMQPServer 127.0.0.1:5672',
+        "AMQPServer $amqp_server:5672",
         "AMQPLog $setup->{log_file}",
         "LogFormat $fmt_name \"%A %a %b %c %D %d %E %{epoch} %F %f %{gid} %g %H %h %I %{iso8601} %J %L %l %m %O %P %p %{protocol} %R %r %{remote-port} %S %s %T %t %U %u %{uid} %V %v %{version}\"",
         "AMQPLogOnEvent ALL $fmt_name",
@@ -294,6 +306,17 @@ sub amqp_log_on_event {
 
   my ($port, $config_user, $config_group) = config_write($setup->{config_file},
     $config);
+
+if (open(my $fh, "< $setup->{config_file}")) {
+  while (my $line = <$fh>) {
+    chomp($line);
+    print STDERR "# $line\n";
+  }
+  close($fh);
+
+} else {
+  die("Can't open $setup->{config_file}: $!");
+}
 
   # Open pipes, for use between the parent and child processes.  Specifically,
   # the child will indicate when it's done with its test by writing a message
@@ -404,6 +427,8 @@ sub amqp_log_on_event_custom_routing_key {
   rmq_queue_delete($queue);
   rmq_queue_declare($queue);
 
+  my $amqp_server = get_rmq_host();
+
   my $config = {
     PidFile => $setup->{pid_file},
     ScoreboardFile => $setup->{scoreboard_file},
@@ -413,6 +438,8 @@ sub amqp_log_on_event_custom_routing_key {
 
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
+    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -422,7 +449,7 @@ sub amqp_log_on_event_custom_routing_key {
       # Note: we need to use arrays here, since order of directives matters.
       'mod_amqp.c' => [
         'AMQPEngine on',
-        'AMQPServer 127.0.0.1:5672',
+        "AMQPServer $amqp_server:5672",
         "AMQPLog $setup->{log_file}",
         "LogFormat $fmt_name \"%A %a %b %c %D %d %E %{epoch} %F %f %{gid} %g %H %h %I %{iso8601} %J %L %l %m %O %P %p %{protocol} %R %r %{remote-port} %S %s %T %t %U %u %{uid} %V %v %{version}\"",
         "AMQPLogOnEvent ALL $fmt_name routing ftp.%a",
@@ -529,6 +556,8 @@ sub amqp_log_on_event_custom_exchange {
     routing_key => $fmt_name,
   });
 
+  my $amqp_server = get_rmq_host();
+
   my $config = {
     PidFile => $setup->{pid_file},
     ScoreboardFile => $setup->{scoreboard_file},
@@ -538,6 +567,8 @@ sub amqp_log_on_event_custom_exchange {
 
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
+    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -547,7 +578,7 @@ sub amqp_log_on_event_custom_exchange {
       # Note: we need to use arrays here, since order of directives matters.
       'mod_amqp.c' => [
         'AMQPEngine on',
-        'AMQPServer 127.0.0.1:5672',
+        "AMQPServer $amqp_server:5672",
         "AMQPLog $setup->{log_file}",
         "LogFormat $fmt_name \"%A %a %b %c %D %d %E %{epoch} %F %f %{gid} %g %H %h %I %{iso8601} %J %L %l %m %O %P %p %{protocol} %R %r %{remote-port} %S %s %T %t %U %u %{uid} %V %v %{version}\"",
         "AMQPLogOnEvent ALL $fmt_name exchange ftp.%a",
@@ -652,6 +683,8 @@ sub amqp_log_on_event_per_dir {
   rmq_queue_delete($queue);
   rmq_queue_declare($queue);
 
+  my $amqp_server = get_rmq_host();
+
   my $config = {
     PidFile => $setup->{pid_file},
     ScoreboardFile => $setup->{scoreboard_file},
@@ -661,6 +694,8 @@ sub amqp_log_on_event_per_dir {
 
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
+    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -681,7 +716,7 @@ sub amqp_log_on_event_per_dir {
     print $fh <<EOC;
 <IfModule mod_amqp.c>
   AMQPEngine on
-  AMQPServer 127.0.0.1:5672
+  AMQPServer $amqp_server:5672
   AMQPLog $setup->{log_file}
   LogFormat $fmt_name "%a %u"
 
@@ -755,7 +790,7 @@ EOC
     $self->assert($record->{user} eq $expected,
       "Expected user '$expected', got '$record->{user}'");
 
-    my $expected = '127.0.0.1';
+    $expected = '127.0.0.1';
     $self->assert($record->{remote_ip} eq $expected,
       "Expected remote IP '$expected', got '$record->{remote_ip}'");
   };
@@ -774,10 +809,24 @@ sub amqp_log_on_event_per_dir_none {
   my $sub_dir = File::Spec->rel2abs("$tmpdir/test.d");
   mkpath($sub_dir);
 
+  # Make sure that, if we're running as root, that the sub directory has
+  # permissions/privs set for the account we create
+  if ($< == 0) {
+    unless (chmod(0755, $sub_dir)) {
+      die("Can't set perms on $sub_dir to 0755: $!");
+    }
+
+    unless (chown($setup->{uid}, $setup->{gid}, $sub_dir)) {
+      die("Can't set owner of $sub_dir to $setup->{uid}/$setup->{gid}: $!");
+    }
+  }
+
   my $fmt_name = 'custom';
   my $queue = $fmt_name;
   rmq_queue_delete($queue);
   rmq_queue_declare($queue);
+
+  my $amqp_server = get_rmq_host();
 
   my $config = {
     PidFile => $setup->{pid_file},
@@ -788,6 +837,8 @@ sub amqp_log_on_event_per_dir_none {
 
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
+    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -808,15 +859,15 @@ sub amqp_log_on_event_per_dir_none {
     print $fh <<EOC;
 <IfModule mod_amqp.c>
   AMQPEngine on
-  AMQPServer 127.0.0.1:5672
+  AMQPServer $amqp_server:5672
   AMQPLog $setup->{log_file}
   LogFormat $fmt_name "%a %u"
 
-  <Directory $setup->{home_dir}>
+  <Directory $sub_dir>
     AMQPLogOnEvent PWD $fmt_name
   </Directory>
 
-  <Directory $sub_dir>
+  <Directory $setup->{home_dir}>
     AMQPLogOnEvent none
   </Directory>
 </IfModule>
@@ -844,6 +895,9 @@ EOC
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
+      sleep(1);
+
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
       $client->login($setup->{user}, $setup->{passwd});
       $client->pwd();
@@ -874,9 +928,13 @@ EOC
 
   eval {
     my $data = rmq_queue_getall($queue);
+    if ($ENV{TEST_VERBOSE}) {
+      use Data::Dumper;
+      print STDERR "# ", Dumper($data), "\n";
+    }
 
     my $nrecords = scalar(@$data);
-    $self->assert($nrecords == 0, "Expected 0 records, got $nrecords");
+    $self->assert($nrecords == 1, "Expected 1 record, got $nrecords");
   };
   if ($@) {
     $ex = $@;
@@ -895,6 +953,7 @@ sub amqp_log_on_event_using_tls {
   rmq_queue_delete($queue);
   rmq_queue_declare($queue);
 
+  my $amqp_server = get_rmq_host();
   my $ssl_verify = 'false';
   my $ssl_ca = File::Spec->rel2abs('t/etc/modules/mod_amqp/cacerts.pem');
 
@@ -907,6 +966,8 @@ sub amqp_log_on_event_using_tls {
 
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
+    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -916,7 +977,7 @@ sub amqp_log_on_event_using_tls {
       # Note: we need to use arrays here, since order of directives matters.
       'mod_amqp.c' => [
         'AMQPEngine on',
-        "AMQPServer 127.0.0.1:5671 \"\" \"\" \"\" ssl-ca:$ssl_ca ssl-verify:$ssl_verify",
+        "AMQPServer $amqp_server:5671 \"\" \"\" \"\" ssl-ca:$ssl_ca ssl-verify:$ssl_verify",
         "AMQPLog $setup->{log_file}",
         "LogFormat $fmt_name \"%A %a %b %c %D %d %E %{epoch} %F %f %{gid} %g %H %h %I %{iso8601} %J %L %l %m %O %P %p %{protocol} %R %r %{remote-port} %S %s %T %t %U %u %{uid} %V %v %{version}\"",
         "AMQPLogOnEvent ALL $fmt_name",
@@ -1037,6 +1098,7 @@ sub amqp_log_on_event_using_tls_verify {
   rmq_queue_delete($queue);
   rmq_queue_declare($queue);
 
+  my $amqp_server = get_rmq_host();
   my $ssl_verify = 'true';
   my $ssl_ca = File::Spec->rel2abs('t/etc/modules/mod_amqp/cacerts.pem');
 
@@ -1049,6 +1111,8 @@ sub amqp_log_on_event_using_tls_verify {
 
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
+    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -1058,7 +1122,7 @@ sub amqp_log_on_event_using_tls_verify {
       # Note: we need to use arrays here, since order of directives matters.
       'mod_amqp.c' => [
         'AMQPEngine on',
-        "AMQPServer 127.0.0.1:5671 \"\" \"\" \"\" ssl-ca:$ssl_ca ssl-verify:$ssl_verify",
+        "AMQPServer $amqp_server:5671 \"\" \"\" \"\" ssl-ca:$ssl_ca ssl-verify:$ssl_verify",
         "AMQPLog $setup->{log_file}",
         "LogFormat $fmt_name \"%A %a %b %c %D %d %E %{epoch} %F %f %{gid} %g %H %h %I %{iso8601} %J %L %l %m %O %P %p %{protocol} %R %r %{remote-port} %S %s %T %t %U %u %{uid} %V %v %{version}\"",
         "AMQPLogOnEvent ALL $fmt_name",
@@ -1148,6 +1212,7 @@ sub amqp_log_on_event_using_tls_verify_peer {
   rmq_queue_delete($queue);
   rmq_queue_declare($queue);
 
+  my $amqp_server = get_rmq_host();
   my $ssl_verify_hostname = 'false';
   my $ssl_verify_peer = 'true';
   my $ssl_ca = File::Spec->rel2abs('t/etc/modules/mod_amqp/cacerts.pem');
@@ -1161,6 +1226,8 @@ sub amqp_log_on_event_using_tls_verify_peer {
 
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
+    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -1170,7 +1237,7 @@ sub amqp_log_on_event_using_tls_verify_peer {
       # Note: we need to use arrays here, since order of directives matters.
       'mod_amqp.c' => [
         'AMQPEngine on',
-        "AMQPServer 127.0.0.1:5671 \"\" \"\" \"\" ssl-ca:$ssl_ca ssl-verify-hostname:$ssl_verify_hostname ssl-verify-peer:$ssl_verify_peer",
+        "AMQPServer $amqp_server:5671 \"\" \"\" \"\" ssl-ca:$ssl_ca ssl-verify-hostname:$ssl_verify_hostname ssl-verify-peer:$ssl_verify_peer",
         "AMQPLog $setup->{log_file}",
         "LogFormat $fmt_name \"%A %a %b %c %D %d %E %{epoch} %F %f %{gid} %g %H %h %I %{iso8601} %J %L %l %m %O %P %p %{protocol} %R %r %{remote-port} %S %s %T %t %U %u %{uid} %V %v %{version}\"",
         "AMQPLogOnEvent ALL $fmt_name",
@@ -1291,6 +1358,7 @@ sub amqp_log_on_event_using_tls_client_cert {
   rmq_queue_delete($queue);
   rmq_queue_declare($queue);
 
+  my $amqp_server = get_rmq_host();
   my $ssl_verify = 'false';
   my $ssl_cert = File::Spec->rel2abs('t/etc/modules/mod_amqp/client-cert.pem');
   my $ssl_key = File::Spec->rel2abs('t/etc/modules/mod_amqp/client-cert.pem');
@@ -1305,6 +1373,8 @@ sub amqp_log_on_event_using_tls_client_cert {
 
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
+    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -1314,7 +1384,7 @@ sub amqp_log_on_event_using_tls_client_cert {
       # Note: we need to use arrays here, since order of directives matters.
       'mod_amqp.c' => [
         'AMQPEngine on',
-        "AMQPServer 127.0.0.1:5671 \"\" \"\" \"\" ssl-ca:$ssl_ca ssl-verify:$ssl_verify ssl-cert:$ssl_cert ssl-key:$ssl_key",
+        "AMQPServer $amqp_server:5671 \"\" \"\" \"\" ssl-ca:$ssl_ca ssl-verify:$ssl_verify ssl-cert:$ssl_cert ssl-key:$ssl_key",
         "AMQPLog $setup->{log_file}",
         "LogFormat $fmt_name \"%A %a %b %c %D %d %E %{epoch} %F %f %{gid} %g %H %h %I %{iso8601} %J %L %l %m %O %P %p %{protocol} %R %r %{remote-port} %S %s %T %t %U %u %{uid} %V %v %{version}\"",
         "AMQPLogOnEvent ALL $fmt_name",
@@ -1435,6 +1505,8 @@ sub amqp_opt_persistent_delivery {
   rmq_queue_delete($queue);
   rmq_queue_declare($queue);
 
+  my $amqp_server = get_rmq_host();
+
   my $config = {
     PidFile => $setup->{pid_file},
     ScoreboardFile => $setup->{scoreboard_file},
@@ -1444,6 +1516,8 @@ sub amqp_opt_persistent_delivery {
 
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
+    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -1453,7 +1527,7 @@ sub amqp_opt_persistent_delivery {
       # Note: we need to use arrays here, since order of directives matters.
       'mod_amqp.c' => [
         'AMQPEngine on',
-        'AMQPServer 127.0.0.1:5672',
+        "AMQPServer $amqp_server:5672",
         "AMQPLog $setup->{log_file}",
         "LogFormat $fmt_name \"%A %a %b %c %D %d %E %{epoch} %F %f %{gid} %g %H %h %I %{iso8601} %J %L %l %m %O %P %p %{protocol} %R %r %{remote-port} %S %s %T %t %U %u %{uid} %V %v %{version}\"",
         "AMQPLogOnEvent ALL $fmt_name",
@@ -1573,6 +1647,7 @@ sub amqp_config_app_id {
   rmq_queue_delete($queue);
   rmq_queue_declare($queue);
 
+  my $amqp_server = get_rmq_host();
   my $app_id = "custom";
 
   my $config = {
@@ -1584,6 +1659,8 @@ sub amqp_config_app_id {
 
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
+    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -1593,7 +1670,7 @@ sub amqp_config_app_id {
       # Note: we need to use arrays here, since order of directives matters.
       'mod_amqp.c' => [
         'AMQPEngine on',
-        'AMQPServer 127.0.0.1:5672',
+        "AMQPServer $amqp_server:5672",
         "AMQPLog $setup->{log_file}",
         "LogFormat $fmt_name \"%A %a %b %c %D %d %E %{epoch} %F %f %{gid} %g %H %h %I %{iso8601} %J %L %l %m %O %P %p %{protocol} %R %r %{remote-port} %S %s %T %t %U %u %{uid} %V %v %{version}\"",
         "AMQPLogOnEvent ALL $fmt_name",
@@ -1713,6 +1790,7 @@ sub amqp_config_msg_type {
   rmq_queue_delete($queue);
   rmq_queue_declare($queue);
 
+  my $amqp_server = get_rmq_host();
   my $msg_type = "custom";
 
   my $config = {
@@ -1724,6 +1802,8 @@ sub amqp_config_msg_type {
 
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
+    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -1733,7 +1813,7 @@ sub amqp_config_msg_type {
       # Note: we need to use arrays here, since order of directives matters.
       'mod_amqp.c' => [
         'AMQPEngine on',
-        'AMQPServer 127.0.0.1:5672',
+        "AMQPServer $amqp_server:5672",
         "AMQPLog $setup->{log_file}",
         "LogFormat $fmt_name \"%A %a %b %c %D %d %E %{epoch} %F %f %{gid} %g %H %h %I %{iso8601} %J %L %l %m %O %P %p %{protocol} %R %r %{remote-port} %S %s %T %t %U %u %{uid} %V %v %{version}\"",
         "AMQPLogOnEvent ALL $fmt_name",
@@ -1853,6 +1933,8 @@ sub amqp_config_msg_expires_before_expiry {
   rmq_queue_delete($queue);
   rmq_queue_declare($queue);
 
+  my $amqp_server = get_rmq_host();
+
   # In ms
   my $msg_expires = "30000";
 
@@ -1865,6 +1947,8 @@ sub amqp_config_msg_expires_before_expiry {
 
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
+    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -1874,7 +1958,7 @@ sub amqp_config_msg_expires_before_expiry {
       # Note: we need to use arrays here, since order of directives matters.
       'mod_amqp.c' => [
         'AMQPEngine on',
-        'AMQPServer 127.0.0.1:5672',
+        "AMQPServer $amqp_server:5672",
         "AMQPLog $setup->{log_file}",
         "LogFormat $fmt_name \"%A %a %b %c %D %d %E %{epoch} %F %f %{gid} %g %H %h %I %{iso8601} %J %L %l %m %O %P %p %{protocol} %R %r %{remote-port} %S %s %T %t %U %u %{uid} %V %v %{version}\"",
         "AMQPLogOnEvent ALL $fmt_name",
@@ -1998,6 +2082,8 @@ sub amqp_config_msg_expires_after_expiry {
   rmq_queue_delete($queue);
   rmq_queue_declare($queue);
 
+  my $amqp_server = get_rmq_host();
+
   # In ms
   my $msg_expires = "1";
 
@@ -2010,6 +2096,8 @@ sub amqp_config_msg_expires_after_expiry {
 
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
+    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -2019,7 +2107,7 @@ sub amqp_config_msg_expires_after_expiry {
       # Note: we need to use arrays here, since order of directives matters.
       'mod_amqp.c' => [
         'AMQPEngine on',
-        'AMQPServer 127.0.0.1:5672',
+        "AMQPServer $amqp_server:5672",
         "AMQPLog $setup->{log_file}",
         "LogFormat $fmt_name \"%A %a %b %c %D %d %E %{epoch} %F %f %{gid} %g %H %h %I %{iso8601} %J %L %l %m %O %P %p %{protocol} %R %r %{remote-port} %S %s %T %t %U %u %{uid} %V %v %{version}\"",
         "AMQPLogOnEvent ALL $fmt_name",

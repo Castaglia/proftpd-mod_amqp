@@ -1,6 +1,6 @@
 /*
  * ProFTPD - mod_amqp
- * Copyright (c) 2017 TJ Saunders
+ * Copyright (c) 2017-2022 TJ Saunders
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1005,8 +1005,8 @@ MODRET set_amqpserver(cmd_rec *cmd) {
   size_t server_len;
   int port = AMQP_PROTOCOL_PORT;
   int ssl_verify = -1, ssl_verify_hostname = -1, ssl_verify_peer = -1;
-  const pr_netaddr_t *addr;
-  array_header *addrs;
+  const pr_netaddr_t *addr = NULL;
+  array_header *addrs = NULL;
 
   if (cmd->argc < 2 ||
       cmd->argc > 11) {
@@ -1039,6 +1039,14 @@ MODRET set_amqpserver(cmd_rec *cmd) {
       }
 
     } else {
+      /* What if the colon is the first character, i.e. the hostname is
+       * missing completely?
+       */
+      if (server == ptr) {
+        CONF_ERROR(cmd, pstrcat(cmd->tmp_pool, "malformed host: ", server,
+          NULL));
+      }
+
       *ptr = '\0';
       port = atoi(ptr + 1);
     }

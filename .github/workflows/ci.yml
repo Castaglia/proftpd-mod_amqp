@@ -14,8 +14,20 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    services:
+      rabbitmq:
+        # Docker Hub image
+        image: rabbitmq:3.8-alpine
+        # Set health checks to wait until RabbitMQ has started
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     env:
       CI: true
+      RABBITMQ_HOST: rabbitmq
 
     strategy:
       matrix:
@@ -96,9 +108,28 @@ jobs:
           apt-get install -y check libsubunit-dev
 
           # for RabbitMQ support
-          apt-get install -y librabbitmq-dev
+          apt-get install -y librabbitmq-dev libssl-dev
 
           # for integration/regression test
+          apt-get install -y \
+            libcompress-raw-zlib-perl \
+            libdata-dumper-simple-perl \
+            libdatetime-perl \
+            libfile-copy-recursive-perl \
+            libfile-path-tiny-perl \
+            libfile-spec-native-perl \
+            libio-socket-inet6-perl \
+            libjson-perl \
+            libnet-amqp-perl \
+            libnet-ssh2-perl \
+            libnet-ssleay-perl \
+            libnet-telnet-perl \
+            libposix-2008-perl \
+            libtest-unit-perl \
+            libtime-hr-perl \
+            libwww-perl
+          PERL_MM_USE_DEFAULT=1 perl -MCPAN -e "CPAN::Shell->notest('install', 'Net::AMQP::RabbitMQ')"
+
           # for test code coverage
           apt-get install -y lcov ruby
           gem install coveralls-lcov
@@ -134,6 +165,15 @@ jobs:
         run: |
           cd proftpd
           make install
+
+      - name: Run integration tests
+        if: ${{ matrix.compiler == 'gcc' && matrix.container == 'ubuntu:18.04' }}
+        env:
+          PROFTPD_TEST_BIN: /usr/local/sbin/proftpd
+          PROFTPD_TEST_DIR: ${{ github.workspace }}/proftpd
+        run: |
+          cd proftpd/contrib/mod_amqp
+          perl tests.pl
 
       - name: Build as shared module
         env:

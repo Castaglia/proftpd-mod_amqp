@@ -86,6 +86,11 @@ my $TESTS = {
     test_class => [qw(forking)],
   },
 
+  amqp_config_timeout => {
+    order => ++$order,
+    test_class => [qw(forking)],
+  },
+
 };
 
 sub new {
@@ -1772,6 +1777,128 @@ sub amqp_config_app_id {
     $expected = '127.0.0.1';
     $self->assert($record->{remote_ip} eq $expected,
       "Expected remote IP '$expected', got '$record->{remote_ip}'");
+  };
+  if ($@) {
+    $ex = $@;
+  }
+
+  test_cleanup($setup->{log_file}, $ex);
+}
+
+sub amqp_config_timeout {
+  my $self = shift;
+  my $tmpdir = $self->{tmpdir};
+  my $setup = test_setup($tmpdir, 'amqp');
+
+  my $amqp_server = get_rmq_host();
+
+  my $config = {
+    PidFile => $setup->{pid_file},
+    ScoreboardFile => $setup->{scoreboard_file},
+    SystemLog => $setup->{log_file},
+    TraceLog => $setup->{log_file},
+    Trace => 'amqp:20 jot:20',
+
+    AuthUserFile => $setup->{auth_user_file},
+    AuthGroupFile => $setup->{auth_group_file},
+    AuthOrder => 'mod_auth_file.c',
+    UseIPv6 => 'off',
+
+    IfModules => {
+      'mod_delay.c' => {
+        DelayEngine => 'off',
+      },
+
+      # Note: we need to use arrays here, since order of directives matters.
+      'mod_amqp.c' => [
+        'AMQPEngine on',
+        'AMQPTimeout 1',
+        "AMQPServer $amqp_server:5673",
+        "AMQPLog $setup->{log_file}",
+      ],
+    },
+  };
+
+  my ($port, $config_user, $config_group) = config_write($setup->{config_file},
+    $config);
+
+  # Open pipes, for use between the parent and child processes.  Specifically,
+  # the child will indicate when it's done with its test by writing a message
+  # to the parent.
+  my ($rfh, $wfh);
+  unless (pipe($rfh, $wfh)) {
+    die("Can't open pipe: $!");
+  }
+
+  my $ex;
+
+  # Fork child
+  $self->handle_sigchld();
+  defined(my $pid = fork()) or die("Can't fork: $!");
+  if ($pid) {
+    eval {
+      my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
+      $client->login($setup->{user}, $setup->{passwd});
+
+      my $resp_code = $client->response_code();
+      my $resp_msg = $client->response_msg(0);
+
+      my $expected = 230;
+      $self->assert($expected == $resp_code,
+        "Expected response code $expected, got $resp_code");
+
+      $expected = "User $setup->{user} logged in";
+      $self->assert($expected eq $resp_msg,
+        "Expected response message '$expected', got '$resp_msg'");
+
+      $client->quit();
+    };
+    if ($@) {
+      $ex = $@;
+    }
+
+    $wfh->print("done\n");
+    $wfh->flush();
+
+  } else {
+    eval { server_wait($setup->{config_file}, $rfh) };
+    if ($@) {
+      warn($@);
+      exit 1;
+    }
+
+    exit 0;
+  }
+
+  # Stop server
+  server_stop($setup->{pid_file});
+  $self->assert_child_ok($pid);
+
+  eval {
+    if (open(my $fh, "< $setup->{log_file}")) {
+      my $saw_timeout_error = 0;
+
+      while (my $line = <$fh>) {
+        chomp($line);
+
+        if ($ENV{TEST_VERBOSE}) {
+          print STDERR "# $line\n";
+        }
+
+        if ($line =~ /operation now in progress/i) {
+          $saw_timeout_error = 1;
+          last;
+        }
+      }
+
+      close($fh);
+
+      $self->assert($saw_timeout_error,
+        test_msg("Did not see expected TraceLog message"));
+
+    } else {
+      die("Can't read $setup->{log_file}: $!");
+    }
   };
   if ($@) {
     $ex = $@;

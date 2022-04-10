@@ -47,6 +47,8 @@
 #define AMQP_DEFAULT_PASSWORD		"guest"
 #define AMQP_DEFAULT_EXCHANGE		""
 
+#define AMQP_DEFAULT_CONNECT_TIMEOUT_MS	2000
+
 extern xaset_t *server_list;
 
 /* From response.c */
@@ -133,7 +135,13 @@ static void amqp_trace_reply(pool *p, amqp_rpc_reply_t reply,
   }
 }
 
-static int amqp_open_conn(pool *p, config_rec *c) {
+static void millis2timeval(struct timeval *tv, unsigned long millis) {
+  tv->tv_sec = (millis / 1000);
+  tv->tv_usec = (millis - (tv->tv_sec * 1000)) * 1000;
+}
+
+static int amqp_open_conn(pool *p, config_rec *c,
+    unsigned long connect_millis) {
   register unsigned int i;
   int connected = FALSE;
   array_header *addrs;
@@ -247,24 +255,40 @@ static int amqp_open_conn(pool *p, config_rec *c) {
   addrs = c->argv[0];
 
   for (i = 0; i < addrs->nelts; i++) {
-    int res;
+    int res, xerrno;
     const pr_netaddr_t *addr;
+    struct timeval tv;
 
     pr_signals_handle();
 
     addr = ((pr_netaddr_t **) addrs->elts)[i];
     ip_addr = pr_netaddr_get_ipstr(addr);
     port = ntohs(pr_netaddr_get_port(addr));
+    millis2timeval(&tv, connect_millis);
 
     pr_trace_msg(trace_channel, 12, "connecting to %s:%u", ip_addr, port);
-    res = amqp_socket_open(sock, ip_addr, port);
-    if (res == AMQP_STATUS_OK) {
-      connected = TRUE;
-      break;
+    res = amqp_socket_open_noblock(sock, ip_addr, port, &tv);
+    xerrno = errno;
+
+    switch (res) {
+      case AMQP_STATUS_OK:
+        connected = TRUE;
+        break;
+
+      case AMQP_STATUS_SOCKET_ERROR:
+        pr_trace_msg(trace_channel, 2, "error connecting to %s:%u: %s (%s)",
+          ip_addr, port, amqp_error_string2(res), strerror(xerrno));
+        break;
+
+      default:
+        pr_trace_msg(trace_channel, 2, "error connecting to %s:%u: %s", ip_addr,
+          port, amqp_error_string2(res));
+        break;
     }
 
-    pr_trace_msg(trace_channel, 2, "error connecting to %s:%u: %s", ip_addr,
-      port, amqp_error_string2(res));
+    if (connected == TRUE) {
+      break;
+    }
   }
 
   if (connected == FALSE) {
@@ -1261,6 +1285,33 @@ MODRET set_amqpserver(cmd_rec *cmd) {
   return PR_HANDLED(cmd);
 }
 
+/* usage: AMQPTimeout connect-millis */
+MODRET set_amqptimeout(cmd_rec *cmd) {
+  config_rec *c;
+  unsigned long connect_millis;
+  char *ptr = NULL;
+
+  CHECK_ARGS(cmd, 1);
+  CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
+
+  connect_millis = strtoul(cmd->argv[1], &ptr, 10);
+  if (ptr && *ptr) {
+    CONF_ERROR(cmd, pstrcat(cmd->tmp_pool,
+      "badly formatted connect timeout value: ", cmd->argv[1], NULL));
+  }
+
+  if (connect_millis < 1) {
+    CONF_ERROR(cmd, pstrcat(cmd->tmp_pool,
+      "connect timeout must be greater than zero: ", cmd->argv[1], NULL));
+  }
+
+  c = add_config_param(cmd->argv[0], 1, NULL);
+  c->argv[0] = palloc(c->pool, sizeof(unsigned long));
+  *((unsigned long *) c->argv[0]) = connect_millis;
+
+  return PR_HANDLED(cmd);
+}
+
 /* Command handlers
  */
 
@@ -1344,6 +1395,7 @@ static int amqp_init(void) {
 static int amqp_sess_init(void) {
   config_rec *c;
   int res, connected = FALSE;
+  unsigned long connect_millis;
 
   /* We have to register our HOST handler here, even if AMQPEngine is off,
    * as the current vhost may be disabled BUT the requested vhost may be
@@ -1399,6 +1451,14 @@ static int amqp_sess_init(void) {
     }
   }
 
+  c = find_config(main_server->conf, CONF_PARAM, "AMQPTimeout", FALSE);
+  if (c != NULL) {
+    connect_millis = *((unsigned long *) c->argv[0]);
+
+  } else {
+    connect_millis = AMQP_DEFAULT_CONNECT_TIMEOUT_MS;
+  }
+
   c = find_config(main_server->conf, CONF_PARAM, "AMQPServer", FALSE);
   if (c == NULL) {
     (void) pr_log_writefile(amqp_logfd, MOD_AMQP_VERSION,
@@ -1418,7 +1478,7 @@ static int amqp_sess_init(void) {
   while (c != NULL) {
     pr_signals_handle();
 
-    res = amqp_open_conn(amqp_pool, c);
+    res = amqp_open_conn(amqp_pool, c, connect_millis);
     if (res == 0) {
       connected = TRUE;
       break;
@@ -1493,6 +1553,7 @@ static conftable amqp_conftab[] = {
   { "AMQPMessageType",		set_amqpmessagetype,	NULL },
   { "AMQPOptions",		set_amqpoptions,	NULL },
   { "AMQPServer",		set_amqpserver,		NULL },
+  { "AMQPTimeout",		set_amqptimeout,	NULL },
 
   { NULL }
 };

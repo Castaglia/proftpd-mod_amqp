@@ -121,6 +121,7 @@ jobs:
             libio-socket-inet6-perl \
             libjson-perl \
             libnet-amqp-perl \
+            libnet-inet6glue-perl \
             libnet-ssh2-perl \
             libnet-ssleay-perl \
             libnet-telnet-perl \

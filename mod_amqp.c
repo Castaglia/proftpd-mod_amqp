@@ -1255,7 +1255,7 @@ MODRET set_amqpserver(cmd_rec *cmd) {
   if (addrs == NULL) {
     addrs = make_array(c->pool, 1, sizeof(pr_netaddr_t *));
   }
- 
+
   *((pr_netaddr_t **) push_array(addrs)) = (pr_netaddr_t *) addr;
 
   for (i = 0; i < addrs->nelts; i++) {

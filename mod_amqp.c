@@ -1,6 +1,6 @@
 /*
  * ProFTPD - mod_amqp
- * Copyright (c) 2017-2022 TJ Saunders
+ * Copyright (c) 2017-2025 TJ Saunders
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -394,7 +394,7 @@ static int amqp_send_msg(pool *p, const char *exchange, const char *routing_key,
   props._flags |= AMQP_BASIC_TYPE_FLAG;
   props.type = amqp_cstring_bytes(amqp_msg_type);
 
-  /* Note: RabbitMQ expects/implements this as a value in millseconds:
+  /* Note: RabbitMQ expects/implements this as a value in milliseconds:
    *  https://www.rabbitmq.com/ttl.html
    */
   if (amqp_msg_expires != NULL) {
@@ -411,7 +411,7 @@ static int amqp_send_msg(pool *p, const char *exchange, const char *routing_key,
   }
 
   /* Note: While it might be tempting to use AMQP_BASIC_USER_ID_FLAG,
-   * it will not work as desired.  RabbitMQ will verify this user ID againt
+   * it will not work as desired.  RabbitMQ will verify this user ID against
    * that used for the connection, which is not what we want.
    */
 

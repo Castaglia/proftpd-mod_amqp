@@ -41,24 +41,28 @@ my $TESTS = {
     test_class => [qw(forking)],
   },
 
+  # Requires TLS support in the RabbitMQ server
   amqp_log_on_event_using_tls => {
     order => ++$order,
-    test_class => [qw(forking mod_tls)],
+    test_class => [qw(forking inprogress mod_tls)],
   },
 
+  # Requires TLS support in the RabbitMQ server
   amqp_log_on_event_using_tls_verify => {
     order => ++$order,
-    test_class => [qw(forking mod_tls)],
+    test_class => [qw(forking inprogress mod_tls)],
   },
 
+  # Requires TLS support in the RabbitMQ server
   amqp_log_on_event_using_tls_verify_peer => {
     order => ++$order,
-    test_class => [qw(forking mod_tls)],
+    test_class => [qw(forking inprogress mod_tls)],
   },
 
+  # Requires TLS support in the RabbitMQ server
   amqp_log_on_event_using_tls_client_cert => {
     order => ++$order,
-    test_class => [qw(forking mod_tls)],
+    test_class => [qw(forking inprogress mod_tls)],
   },
 
   amqp_opt_persistent_delivery => {
@@ -312,17 +316,6 @@ sub amqp_log_on_event {
   my ($port, $config_user, $config_group) = config_write($setup->{config_file},
     $config);
 
-if (open(my $fh, "< $setup->{config_file}")) {
-  while (my $line = <$fh>) {
-    chomp($line);
-    print STDERR "# $line\n";
-  }
-  close($fh);
-
-} else {
-  die("Can't open $setup->{config_file}: $!");
-}
-
   # Open pipes, for use between the parent and child processes.  Specifically,
   # the child will indicate when it's done with its test by writing a message
   # to the parent.
@@ -338,6 +331,9 @@ if (open(my $fh, "< $setup->{config_file}")) {
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
+      sleep(1);
+
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
       $client->login($setup->{user}, $setup->{passwd});
 
@@ -426,13 +422,13 @@ sub amqp_log_on_event_custom_routing_key {
   my $tmpdir = $self->{tmpdir};
   my $setup = test_setup($tmpdir, 'amqp');
 
+  my $amqp_server = get_rmq_host();
+
   my $fmt_name = 'mod_amqp';
   my $routing_key = 'ftp.127.0.0.1';
   my $queue = $routing_key;
   rmq_queue_delete($queue);
   rmq_queue_declare($queue);
-
-  my $amqp_server = get_rmq_host();
 
   my $config = {
     PidFile => $setup->{pid_file},
@@ -444,7 +440,6 @@ sub amqp_log_on_event_custom_routing_key {
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
     AuthOrder => 'mod_auth_file.c',
-    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -480,6 +475,9 @@ sub amqp_log_on_event_custom_routing_key {
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
+      sleep(1);
+
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
       $client->login($setup->{user}, $setup->{passwd});
 
@@ -573,7 +571,6 @@ sub amqp_log_on_event_custom_exchange {
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
     AuthOrder => 'mod_auth_file.c',
-    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -609,6 +606,9 @@ sub amqp_log_on_event_custom_exchange {
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
+      sleep(1);
+
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
       $client->login($setup->{user}, $setup->{passwd});
 
@@ -700,7 +700,6 @@ sub amqp_log_on_event_per_dir {
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
     AuthOrder => 'mod_auth_file.c',
-    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -753,6 +752,9 @@ EOC
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
+      sleep(1);
+
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
       $client->login($setup->{user}, $setup->{passwd});
       $client->pwd();
@@ -843,7 +845,6 @@ sub amqp_log_on_event_per_dir_none {
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
     AuthOrder => 'mod_auth_file.c',
-    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -972,7 +973,6 @@ sub amqp_log_on_event_using_tls {
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
     AuthOrder => 'mod_auth_file.c',
-    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -1008,6 +1008,7 @@ sub amqp_log_on_event_using_tls {
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
       sleep(2);
 
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
@@ -1117,7 +1118,6 @@ sub amqp_log_on_event_using_tls_verify {
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
     AuthOrder => 'mod_auth_file.c',
-    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -1153,7 +1153,8 @@ sub amqp_log_on_event_using_tls_verify {
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
-      sleep(2);
+      # Allow for server startup
+      sleep(1);
 
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
       $client->login($setup->{user}, $setup->{passwd});
@@ -1232,7 +1233,6 @@ sub amqp_log_on_event_using_tls_verify_peer {
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
     AuthOrder => 'mod_auth_file.c',
-    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -1268,7 +1268,8 @@ sub amqp_log_on_event_using_tls_verify_peer {
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
-      sleep(2);
+      # Allow for server startup
+      sleep(1);
 
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
       $client->login($setup->{user}, $setup->{passwd});
@@ -1379,7 +1380,6 @@ sub amqp_log_on_event_using_tls_client_cert {
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
     AuthOrder => 'mod_auth_file.c',
-    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -1415,7 +1415,8 @@ sub amqp_log_on_event_using_tls_client_cert {
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
-      sleep(2);
+      # Allow for server startup
+      sleep(1);
 
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
       $client->login($setup->{user}, $setup->{passwd});
@@ -1522,7 +1523,6 @@ sub amqp_opt_persistent_delivery {
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
     AuthOrder => 'mod_auth_file.c',
-    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -1559,6 +1559,9 @@ sub amqp_opt_persistent_delivery {
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
+      sleep(1);
+
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
       $client->login($setup->{user}, $setup->{passwd});
 
@@ -1665,7 +1668,6 @@ sub amqp_config_app_id {
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
     AuthOrder => 'mod_auth_file.c',
-    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -1702,6 +1704,9 @@ sub amqp_config_app_id {
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
+      sleep(1);
+
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
       $client->login($setup->{user}, $setup->{passwd});
 
@@ -1802,7 +1807,6 @@ sub amqp_config_timeout {
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
     AuthOrder => 'mod_auth_file.c',
-    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -1837,6 +1841,9 @@ sub amqp_config_timeout {
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
+      sleep(1);
+
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
       $client->login($setup->{user}, $setup->{passwd});
 
@@ -1930,7 +1937,6 @@ sub amqp_config_msg_type {
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
     AuthOrder => 'mod_auth_file.c',
-    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -1967,6 +1973,9 @@ sub amqp_config_msg_type {
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
+      sleep(1);
+
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
       $client->login($setup->{user}, $setup->{passwd});
 
@@ -2075,7 +2084,6 @@ sub amqp_config_msg_expires_before_expiry {
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
     AuthOrder => 'mod_auth_file.c',
-    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -2112,6 +2120,9 @@ sub amqp_config_msg_expires_before_expiry {
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
+      sleep(1);
+
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
       $client->login($setup->{user}, $setup->{passwd});
 
@@ -2224,7 +2235,6 @@ sub amqp_config_msg_expires_after_expiry {
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
     AuthOrder => 'mod_auth_file.c',
-    UseIPv6 => 'off',
 
     IfModules => {
       'mod_delay.c' => {
@@ -2261,6 +2271,9 @@ sub amqp_config_msg_expires_after_expiry {
   defined(my $pid = fork()) or die("Can't fork: $!");
   if ($pid) {
     eval {
+      # Allow for server startup
+      sleep(1);
+
       my $client = ProFTPD::TestSuite::FTP->new('127.0.0.1', $port);
       $client->login($setup->{user}, $setup->{passwd});
 

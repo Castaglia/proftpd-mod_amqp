@@ -1,0 +1,115 @@
+name: Regression Tests
+
+on:
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - '*.html'
+      - '*.md'
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      # Let's try opting into use of Nodejs v24; see:
+      #  https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+      # GitHub runners still causing problems with NodeJS v20; see:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+      DEBIAN_FRONTEND: noninteractive
+      RABBITMQ_HOST: rabbitmq
+      TZ: America/Los_Angeles
+
+    services:
+      rabbitmq:
+        # Docker Hub image
+        image: rabbitmq:3.8-alpine
+        # Set health checks to wait until RabbitMQ has started
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    strategy:
+      matrix:
+        compiler:
+          - gcc
+        container:
+          - ubuntu:22.04
+
+    container: ${{ matrix.container }}
+
+    steps:
+      - name: Checkout ProFTPD
+        uses: actions/checkout@v6
+        with:
+          repository: proftpd/proftpd
+          path: proftpd
+
+      - name: Checkout module source code
+        uses: actions/checkout@v6
+        with:
+          path: proftpd/contrib/mod_amqp
+
+      - name: Install Ubuntu packages
+        run: |
+          apt-get update -qq
+          # for builds
+          apt-get install -y gcc git make tzdata
+
+          # for OpenSSL support
+          apt-get install -y libssl-dev
+          # for RabbitMQ support
+          apt-get install -y librabbitmq-dev
+
+          # for integration/regression tests
+          apt-get install -y \
+            libauthen-oath-perl \
+            libcompress-raw-zlib-perl \
+            libdata-dumper-simple-perl \
+            libdatetime-perl \
+            libfile-copy-recursive-perl \
+            libfile-path-tiny-perl \
+            libfile-spec-native-perl \
+            libjson-perl \
+            libmime-base32-perl \
+            libnet-address-ip-local-perl \
+            libnet-amqp-perl \
+            libnet-inet6glue-perl \
+            libnet-ssh2-perl \
+            libnet-ssleay-perl \
+            libnet-telnet-perl \
+            libposix-2008-perl \
+            libtest-unit-perl \
+            libtime-hr-perl \
+            libwww-perl
+          PERL_MM_USE_DEFAULT=1 perl -MCPAN -e "CPAN::Shell->notest('install', 'Net::AMQP::RabbitMQ')"
+
+          # for debugging
+          gcc --version
+          openssl version -a
+
+      - name: Install with static modules
+        # NOTE: Docker does not have good IPv6 support, hence we disable it.
+        run: |
+          cd proftpd
+          ./configure --disable-ipv6 --with-modules=mod_tls:mod_amqp
+          make
+          ./proftpd -V
+          make install
+
+      - name: Run integration tests
+        env:
+          PROFTPD_TEST_BIN: /usr/local/sbin/proftpd
+          PROFTPD_TEST_CI: github
+          PROFTPD_TEST_DIR: ${{ github.workspace }}/proftpd/tests
+        run: |
+          cd proftpd/contrib/mod_amqp
+          perl tests.pl

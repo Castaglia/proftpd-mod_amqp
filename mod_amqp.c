@@ -725,6 +725,8 @@ static void log_event(amqp_channel_t chan, config_rec *c, cmd_rec *cmd) {
         exchange = AMQP_DEFAULT_EXCHANGE;
       }
 
+      jot_ctx->log = rb = NULL;
+
     } else {
       exchange = AMQP_DEFAULT_EXCHANGE;
     }
@@ -753,6 +755,8 @@ static void log_event(amqp_channel_t chan, config_rec *c, cmd_rec *cmd) {
           strerror(errno));
         routing_key = fmt_name;
       }
+
+      jot_ctx->log = rb = NULL;
 
     } else {
       routing_key = fmt_name;
@@ -845,15 +849,18 @@ static unsigned char *parse_jotted_key(pool *p, const char *text) {
 
   res = pr_jot_parse_logfmt(tmp_pool, text, jot_ctx,
     pr_jot_parse_on_meta, pr_jot_parse_on_unknown, pr_jot_parse_on_other, 0);
-  destroy_pool(tmp_pool);
-
   if (res < 0) {
+    destroy_pool(tmp_pool);
     return NULL;
   }
 
   fmtlen = jot_parsed->bufsz - jot_parsed->buflen;
   fmtbuf[fmtlen] = '\0';
   fmt = (unsigned char *) pstrndup(p, (char *) fmtbuf, fmtlen);
+
+  destroy_pool(tmp_pool);
+  jot_ctx = jot_parsed = NULL;
+
   return fmt;
 }
 

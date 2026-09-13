@@ -3694,6 +3694,19 @@ fi
 
 done
 
+for ac_header in rabbitmq-c/amqp.h rabbitmq-c/tcp_socket.h rabbitmq-c/ssl_socket.h
+do :
+  as_ac_Header=`$as_echo "ac_cv_header_$ac_header" | $as_tr_sh`
+ac_fn_c_check_header_mongrel "$LINENO" "$ac_header" "$as_ac_Header" "$ac_includes_default"
+if eval test \"x\$"$as_ac_Header"\" = x"yes"; then :
+  cat >>confdefs.h <<_ACEOF
+#define `$as_echo "HAVE_$ac_header" | $as_tr_cpp` 1
+_ACEOF
+
+fi
+
+done
+
 
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for librabbitmq AMQP_DELIVERY_PERSISTENT enum" >&5
 $as_echo_n "checking for librabbitmq AMQP_DELIVERY_PERSISTENT enum... " >&6; }
@@ -3701,7 +3714,13 @@ cat confdefs.h - <<_ACEOF >conftest.$ac_ext
 /* end confdefs.h.  */
 
     #include <sys/types.h>
-    #include <amqp.h>
+    #if defined(HAVE_RABBITMQ_C_AMQP_H)
+    # include <rabbitmq-c/amqp.h>
+    #else
+    # if defined(HAVE_AMQP_H)
+    #  include <amqp.h>
+    # endif /* HAVE_AMQP_H */
+    #endif /* HAVE_RABBIMQ_C_AMQP_H */
 
 int
 main ()
@@ -3739,9 +3758,29 @@ $as_echo_n "checking for librabbitmq amqp_ssl_socket_new... " >&6; }
 cat confdefs.h - <<_ACEOF >conftest.$ac_ext
 /* end confdefs.h.  */
 
-    #include <amqp.h>
-    #include <amqp_tcp_socket.h>
-    #include <amqp_ssl_socket.h>
+    #if defined(HAVE_RABBITMQ_C_AMQP_H)
+    # include <rabbitmq-c/amqp.h>
+    #else
+    # if defined(HAVE_AMQP_H)
+    #  include <amqp.h>
+    # endif /* HAVE_AMQP_H */
+    #endif /* HAVE_RABBIMQ_C_AMQP_H */
+
+    #if defined(HAVE_RABBITMQ_C_TCP_SOCKET_H)
+    # include <rabbitmq-c/tcp_socket.h>
+    #else
+    # if defined(HAVE_AMQP_TCP_SOCKET_H)
+    #  include <amqp_tcp_socket.h>
+    # endif /* HAVE_AMQP_TCP_SOCKET_H */
+    #endif /* HAVE_RABBITMQ_C_TCP_SOCKET_H */
+
+    #if defined(HAVE_RABBITMQ_C_SSL_SOCKET_H)
+    # include <rabbitmq-c/ssl_socket.h>
+    #else
+    # if defined(HAVE_AMQP_SSL_SOCKET_H)
+    #  include <amqp_ssl_socket.h>
+    # endif /* HAVE_AMQP_SSL_SOCKET_H */
+    #endif /* HAVE_RABBITMQ_C_SSL_SOCKET_H */
 
 int
 main ()
@@ -3776,9 +3815,29 @@ $as_echo_n "checking for librabbitmq amqp_ssl_socket_set_verify_hostname... " >&
 cat confdefs.h - <<_ACEOF >conftest.$ac_ext
 /* end confdefs.h.  */
 
-    #include <amqp.h>
-    #include <amqp_tcp_socket.h>
-    #include <amqp_ssl_socket.h>
+    #if defined(HAVE_RABBITMQ_C_AMQP_H)
+    # include <rabbitmq-c/amqp.h>
+    #else
+    # if defined(HAVE_AMQP_H)
+    #  include <amqp.h>
+    # endif /* HAVE_AMQP_H */
+    #endif /* HAVE_RABBIMQ_C_AMQP_H */
+
+    #if defined(HAVE_RABBITMQ_C_TCP_SOCKET_H)
+    # include <rabbitmq-c/tcp_socket.h>
+    #else
+    # if defined(HAVE_AMQP_TCP_SOCKET_H)
+    #  include <amqp_tcp_socket.h>
+    # endif /* HAVE_AMQP_TCP_SOCKET_H */
+    #endif /* HAVE_RABBITMQ_C_TCP_SOCKET_H */
+
+    #if defined(HAVE_RABBITMQ_C_SSL_SOCKET_H)
+    # include <rabbitmq-c/ssl_socket.h>
+    #else
+    # if defined(HAVE_AMQP_SSL_SOCKET_H)
+    #  include <amqp_ssl_socket.h>
+    # endif /* HAVE_AMQP_SSL_SOCKET_H */
+    #endif /* HAVE_RABBITMQ_C_SSL_SOCKET_H */
 
 int
 main ()
@@ -3814,9 +3873,29 @@ $as_echo_n "checking for librabbitmq amqp_ssl_socket_set_verify_peer... " >&6; }
 cat confdefs.h - <<_ACEOF >conftest.$ac_ext
 /* end confdefs.h.  */
 
-    #include <amqp.h>
-    #include <amqp_tcp_socket.h>
-    #include <amqp_ssl_socket.h>
+    #if defined(HAVE_RABBITMQ_C_AMQP_H)
+    # include <rabbitmq-c/amqp.h>
+    #else
+    # if defined(HAVE_AMQP_H)
+    #  include <amqp.h>
+    # endif /* HAVE_AMQP_H */
+    #endif /* HAVE_RABBIMQ_C_AMQP_H */
+
+    #if defined(HAVE_RABBITMQ_C_TCP_SOCKET_H)
+    # include <rabbitmq-c/tcp_socket.h>
+    #else
+    # if defined(HAVE_AMQP_TCP_SOCKET_H)
+    #  include <amqp_tcp_socket.h>
+    # endif /* HAVE_AMQP_TCP_SOCKET_H */
+    #endif /* HAVE_RABBITMQ_C_TCP_SOCKET_H */
+
+    #if defined(HAVE_RABBITMQ_C_SSL_SOCKET_H)
+    # include <rabbitmq-c/ssl_socket.h>
+    #else
+    # if defined(HAVE_AMQP_SSL_SOCKET_H)
+    #  include <amqp_ssl_socket.h>
+    # endif /* HAVE_AMQP_SSL_SOCKET_H */
+    #endif /* HAVE_RABBITMQ_C_SSL_SOCKET_H */
 
 int
 main ()

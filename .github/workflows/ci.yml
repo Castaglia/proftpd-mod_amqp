@@ -93,10 +93,13 @@ jobs:
           yum install -y check-devel subunit subunit-devel
           # for RabbitMQ support
           yum install -y librabbitmq-devel
+          # for OpenSSL support
+          yum install -y openssl-devel openssl
 
           # for debugging
           clang --version
           gcc --version
+          openssl version -a
 
       - name: Install Ubuntu packages
         if: ${{ matrix.container == 'ubuntu:22.04' }}

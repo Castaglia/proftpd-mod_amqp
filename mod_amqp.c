@@ -27,11 +27,30 @@
 
 #include "mod_amqp.h"
 #include "jot.h"
-#include <amqp.h>
-#include <amqp_tcp_socket.h>
-#ifdef HAVE_AMQP_SSL_SOCKET_H
-# include <amqp_ssl_socket.h>
-#endif
+
+#if defined(HAVE_RABBITMQ_C_AMQP_H)
+# include <rabbitmq-c/amqp.h>
+#else
+# if defined(HAVE_AMQP_H)
+#  include <amqp.h>
+# endif /* HAVE_AMQP_H */
+#endif /* HAVE_RABBITMQ_C_AMQP_H */
+
+#if defined(HAVE_RABBITMQ_C_TCP_SOCKET_H)
+# include <rabbitmq-c/tcp_socket.h>
+#else
+# if defined(HAVE_AMQP_TCP_SOCKET_H)
+#  include <amqp_tcp_socket.h>
+# endif /* HAVE_AMQP_TCP_SOCKET_H */
+#endif /* HAVE_RABBITMQ_C_TCP_SOCKET_H */
+
+#if defined(HAVE_RABBITMQ_C_SSL_SOCKET_H)
+# include <rabbitmq-c/ssl_socket.h>
+#else
+# if defined(HAVE_AMQP_SSL_SOCKET_H)
+#  include <amqp_ssl_socket.h>
+# endif /* HAVE_AMQP_SSL_SOCKET_H */
+#endif /* HAVE_RABBITMQ_C_SSL_SOCKET_H */
 
 /* Newer versions of librabbitmq define these delivery mode values via enum. */
 #ifndef HAVE_RABBITMQ_DELIVERY_MODE
@@ -967,13 +986,12 @@ MODRET set_amqplogonevent(cmd_rec *cmd) {
 
 /* usage: AMQPMessageExpires millis */
 MODRET set_amqpmessageexpires(cmd_rec *cmd) {
-  unsigned long expires = 0;
   char *ptr = NULL;
 
   CHECK_ARGS(cmd, 1);
   CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
 
-  expires = strtoul(cmd->argv[1], &ptr, 10);
+  (void) strtoul(cmd->argv[1], &ptr, 10);
   if (ptr && *ptr) {
     CONF_ERROR(cmd, "invalid parameter");
   }

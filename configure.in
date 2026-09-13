@@ -1,5 +1,5 @@
 dnl ProFTPD - mod_amqp
-dnl Copyright (c) 2017-2023 TJ Saunders <tj@castaglia.org>
+dnl Copyright (c) 2017-2026 TJ Saunders <tj@castaglia.org>
 dnl
 dnl This program is free software; you can redistribute it and/or modify
 dnl it under the terms of the GNU General Public License as published by
@@ -12,8 +12,7 @@ dnl MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 dnl GNU General Public License for more details.
 dnl
 dnl You should have received a copy of the GNU General Public License
-dnl along with this program; if not, write to the Free Software
-dnl Foundation, Inc., 51 Franklin Street, Suite 500, Boston, MA 02110-1335, USA.
+dnl along with this program; if not, see <https://www.gnu.org/licenses/>.
 dnl
 dnl Process this file with autoconf to produce a configure script.
 
@@ -66,12 +65,19 @@ AC_ARG_WITH(libraries,
 AC_HEADER_STDC
 AC_CHECK_HEADERS(stdlib.h uuid/uuid.h unistd.h limits.h fcntl.h)
 AC_CHECK_HEADERS(amqp.h amqp_tcp_socket.h amqp_ssl_socket.h)
+AC_CHECK_HEADERS(rabbitmq-c/amqp.h rabbitmq-c/tcp_socket.h rabbitmq-c/ssl_socket.h)
 
 AC_MSG_CHECKING([for librabbitmq AMQP_DELIVERY_PERSISTENT enum])
 AC_TRY_COMPILE(
   [
     #include <sys/types.h>
-    #include <amqp.h>
+    #if defined(HAVE_RABBITMQ_C_AMQP_H)
+    # include <rabbitmq-c/amqp.h>
+    #else
+    # if defined(HAVE_AMQP_H)
+    #  include <amqp.h>
+    # endif /* HAVE_AMQP_H */
+    #endif /* HAVE_RABBIMQ_C_AMQP_H */
   ], [
     unsigned int delivery_mode = AMQP_DELIVERY_PERSISTENT;
   ], [
@@ -90,9 +96,29 @@ LIBS="$LIBS -lcrypto -lssl -lrabbitmq"
 AC_MSG_CHECKING([for librabbitmq amqp_ssl_socket_new])
 AC_TRY_LINK(
   [
-    #include <amqp.h>
-    #include <amqp_tcp_socket.h>
-    #include <amqp_ssl_socket.h>
+    #if defined(HAVE_RABBITMQ_C_AMQP_H)
+    # include <rabbitmq-c/amqp.h>
+    #else
+    # if defined(HAVE_AMQP_H)
+    #  include <amqp.h>
+    # endif /* HAVE_AMQP_H */
+    #endif /* HAVE_RABBIMQ_C_AMQP_H */
+
+    #if defined(HAVE_RABBITMQ_C_TCP_SOCKET_H)
+    # include <rabbitmq-c/tcp_socket.h>
+    #else
+    # if defined(HAVE_AMQP_TCP_SOCKET_H)
+    #  include <amqp_tcp_socket.h>
+    # endif /* HAVE_AMQP_TCP_SOCKET_H */
+    #endif /* HAVE_RABBITMQ_C_TCP_SOCKET_H */
+
+    #if defined(HAVE_RABBITMQ_C_SSL_SOCKET_H)
+    # include <rabbitmq-c/ssl_socket.h>
+    #else
+    # if defined(HAVE_AMQP_SSL_SOCKET_H)
+    #  include <amqp_ssl_socket.h>
+    # endif /* HAVE_AMQP_SSL_SOCKET_H */
+    #endif /* HAVE_RABBITMQ_C_SSL_SOCKET_H */
   ],
   [
     amqp_connection_state_t conn;
@@ -110,9 +136,29 @@ AC_TRY_LINK(
 AC_MSG_CHECKING([for librabbitmq amqp_ssl_socket_set_verify_hostname])
 AC_TRY_LINK(
   [
-    #include <amqp.h>
-    #include <amqp_tcp_socket.h>
-    #include <amqp_ssl_socket.h>
+    #if defined(HAVE_RABBITMQ_C_AMQP_H)
+    # include <rabbitmq-c/amqp.h>
+    #else
+    # if defined(HAVE_AMQP_H)
+    #  include <amqp.h>
+    # endif /* HAVE_AMQP_H */
+    #endif /* HAVE_RABBIMQ_C_AMQP_H */
+
+    #if defined(HAVE_RABBITMQ_C_TCP_SOCKET_H)
+    # include <rabbitmq-c/tcp_socket.h>
+    #else
+    # if defined(HAVE_AMQP_TCP_SOCKET_H)
+    #  include <amqp_tcp_socket.h>
+    # endif /* HAVE_AMQP_TCP_SOCKET_H */
+    #endif /* HAVE_RABBITMQ_C_TCP_SOCKET_H */
+
+    #if defined(HAVE_RABBITMQ_C_SSL_SOCKET_H)
+    # include <rabbitmq-c/ssl_socket.h>
+    #else
+    # if defined(HAVE_AMQP_SSL_SOCKET_H)
+    #  include <amqp_ssl_socket.h>
+    # endif /* HAVE_AMQP_SSL_SOCKET_H */
+    #endif /* HAVE_RABBITMQ_C_SSL_SOCKET_H */
   ],
   [
     amqp_socket_t *sock = NULL;
@@ -130,9 +176,29 @@ AC_TRY_LINK(
 AC_MSG_CHECKING([for librabbitmq amqp_ssl_socket_set_verify_peer])
 AC_TRY_LINK(
   [
-    #include <amqp.h>
-    #include <amqp_tcp_socket.h>
-    #include <amqp_ssl_socket.h>
+    #if defined(HAVE_RABBITMQ_C_AMQP_H)
+    # include <rabbitmq-c/amqp.h>
+    #else
+    # if defined(HAVE_AMQP_H)
+    #  include <amqp.h>
+    # endif /* HAVE_AMQP_H */
+    #endif /* HAVE_RABBIMQ_C_AMQP_H */
+
+    #if defined(HAVE_RABBITMQ_C_TCP_SOCKET_H)
+    # include <rabbitmq-c/tcp_socket.h>
+    #else
+    # if defined(HAVE_AMQP_TCP_SOCKET_H)
+    #  include <amqp_tcp_socket.h>
+    # endif /* HAVE_AMQP_TCP_SOCKET_H */
+    #endif /* HAVE_RABBITMQ_C_TCP_SOCKET_H */
+
+    #if defined(HAVE_RABBITMQ_C_SSL_SOCKET_H)
+    # include <rabbitmq-c/ssl_socket.h>
+    #else
+    # if defined(HAVE_AMQP_SSL_SOCKET_H)
+    #  include <amqp_ssl_socket.h>
+    # endif /* HAVE_AMQP_SSL_SOCKET_H */
+    #endif /* HAVE_RABBITMQ_C_SSL_SOCKET_H */
   ],
   [
     amqp_socket_t *sock = NULL;
